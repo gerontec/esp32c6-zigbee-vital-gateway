@@ -18,7 +18,7 @@ static esp_err_t _create_vital_cluster(esp_matter::endpoint_t *ep,
 {
     /* Cluster anlegen (server-seitig, kein client flag) */
     esp_matter::cluster_t *cl =
-        esp_matter::cluster::create(ep, cluster_id, CLUSTER_FLAG_SERVER);
+        esp_matter::cluster::create(ep, cluster_id, esp_matter::CLUSTER_FLAG_SERVER);
     if (!cl) {
         ESP_LOGE(TAG, "Cluster 0x%08lx anlegen fehlgeschlagen", cluster_id);
         return ESP_FAIL;
@@ -27,19 +27,19 @@ static esp_err_t _create_vital_cluster(esp_matter::endpoint_t *ep,
     /* Attribut 0x0000: value (uint16, R, Reportable) */
     esp_matter_attr_val_t val_value = esp_matter_uint16(init_value);
     esp_matter::attribute::create(cl, VITAL_ATTR_VALUE,
-        ATTRIBUTE_FLAG_NONE | ATTRIBUTE_FLAG_EXTERNAL_STORAGE,
+        esp_matter::ATTRIBUTE_FLAG_NONE | esp_matter::ATTRIBUTE_FLAG_EXTERNAL_STORAGE,
         val_value);
 
     /* Attribut 0x0001: category (uint8, R, Reportable) */
     esp_matter_attr_val_t val_cat = esp_matter_uint8(init_cat);
     esp_matter::attribute::create(cl, VITAL_ATTR_CATEGORY,
-        ATTRIBUTE_FLAG_NONE | ATTRIBUTE_FLAG_EXTERNAL_STORAGE,
+        esp_matter::ATTRIBUTE_FLAG_NONE | esp_matter::ATTRIBUTE_FLAG_EXTERNAL_STORAGE,
         val_cat);
 
     /* Attribut 0x0002: radar_status (uint8, R) – nur im BPM-Cluster sinnvoll */
     esp_matter_attr_val_t val_status = esp_matter_uint8(0);
     esp_matter::attribute::create(cl, VITAL_ATTR_RADAR_STATUS,
-        ATTRIBUTE_FLAG_NONE | ATTRIBUTE_FLAG_EXTERNAL_STORAGE,
+        esp_matter::ATTRIBUTE_FLAG_NONE | esp_matter::ATTRIBUTE_FLAG_EXTERNAL_STORAGE,
         val_status);
 
     ESP_LOGI(TAG, "Vital-Cluster 0x%08lx ep=%d angelegt",
