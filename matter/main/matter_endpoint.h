@@ -19,6 +19,10 @@
  * Border Router (z.B. RPi + ot-br-posix) verbindet Thread → IP-Netz.
  */
 
+#ifdef __cplusplus
+extern "C" {
+#endif
+
 /** Matter-Endpoints initialisieren und im Data Model registrieren. */
 esp_err_t matter_endpoints_init(void);
 
@@ -26,3 +30,7 @@ esp_err_t matter_endpoints_init(void);
 esp_err_t matter_update_vitals(uint16_t bpm, uint16_t rpm,
                                 uint8_t bpm_cat, uint8_t rpm_cat,
                                 uint8_t radar_status);
+
+#ifdef __cplusplus
+}
+#endif
