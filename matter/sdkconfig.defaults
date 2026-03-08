@@ -1,0 +1,27 @@
+# ESP32-C6 Matter over Thread – sdkconfig defaults
+
+# Chip
+CONFIG_IDF_TARGET="esp32c6"
+
+# Thread (OpenThread als Matter-Transport)
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_FTD=y
+CONFIG_OPENTHREAD_RADIO_NATIVE=y
+
+# Matter
+CONFIG_ESP_MATTER_ENABLE_DATA_MODEL=y
+CONFIG_ESP_MATTER_NVS_ENCRYPTION=n
+
+# BLE für Matter Commissioning (BLE GATT, kein Classic BT)
+CONFIG_BT_ENABLED=y
+CONFIG_BT_NIMBLE_ENABLED=y
+
+# Partition-Tabelle (Matter braucht nvs + ota + factory)
+CONFIG_PARTITION_TABLE_CUSTOM=y
+CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
+
+# Logging
+CONFIG_LOG_DEFAULT_LEVEL_INFO=y
+
+# Watchdog
+CONFIG_ESP_TASK_WDT_TIMEOUT_S=30

@@ -1,0 +1,10 @@
+## ESP-IDF Component Manager Manifest
+dependencies:
+  idf:
+    version: ">=5.1.0"
+  espressif/esp_matter:
+    version: ">=1.3.0"
+  espressif/esp_insights:
+    version: "*"
+    rules:
+      - if: "idf_version >=5.0"
