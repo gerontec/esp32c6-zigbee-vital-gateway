@@ -38,6 +38,8 @@ from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
 import paho.mqtt.client as mqtt
+import pymysql
+import pymysql.cursors
 
 # ── Konfiguration ────────────────────────────────────────────────────────────
 MQTT_HOST      = os.getenv("MQTT_HOST",    "localhost")
@@ -47,6 +49,11 @@ MQTT_PASS      = os.getenv("MQTT_PASS",    None)
 WEB_PORT       = int(os.getenv("WEB_PORT", "8080"))
 DEVICES_FILE   = Path(os.getenv("DEVICES_FILE", "/etc/esp32-gw/devices.json"))
 LOG_LEVEL      = os.getenv("LOG_LEVEL", "INFO")
+
+DB_HOST        = os.getenv("DB_HOST",  "192.168.178.218")
+DB_USER        = os.getenv("DB_USER",  "gh")
+DB_PASS        = os.getenv("DB_PASS",  "a12345")
+DB_NAME        = os.getenv("DB_NAME",  "wagodb")
 # ─────────────────────────────────────────────────────────────────────────────
 
 logging.basicConfig(
@@ -55,6 +62,205 @@ logging.basicConfig(
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 log = logging.getLogger("gw")
+
+# ── MariaDB ───────────────────────────────────────────────────────────────────
+# Datenbankschicht – Verbindung: -h 192.168.178.218 -u gh -pa12345 wagodb
+#
+# Tabellen:
+#
+#   esp32_gateways          – Ein Eintrag je Gateway-MAC (UPSERT)
+#     mac        CHAR(8)      Eindeutige Gateway-ID (z.B. "aabbccdd")
+#     status     VARCHAR(16)  "online" / "offline"
+#     last_seen  DATETIME     Letzte Aktivität
+#
+#   esp32_vitals             – Zeitreihe MR60BHA1-Messwerte (INSERT)
+#     id         INT PK AUTO
+#     mac        CHAR(8)      Zugehöriger Gateway
+#     ts         DATETIME(3)  Messzeitpunkt (ms-Auflösung)
+#     bpm        SMALLINT     Herzrate
+#     rpm        SMALLINT     Atemrate
+#     bpm_cat    TINYINT      0=none 1=normal 2=fast 3=slow
+#     rpm_cat    TINYINT      0=none 1=normal 2=fast 3=slow
+#     radar_status TINYINT    0=init 1=calibrating 2=measuring
+#
+#   esp32_zigbee_devices     – Ein Eintrag je Zigbee-Gerät (UPSERT)
+#     mac        CHAR(8)      Zugehöriger Gateway
+#     addr       VARCHAR(8)   Zigbee-Kurzadresse (z.B. "0x1a2b")
+#     ieee       VARCHAR(24)  IEEE-Langadresse
+#     name       VARCHAR(64)  Freundlicher Name (aus devices.json)
+#     last_seen  DATETIME     Letztes Datenpaket
+#
+#   esp32_zigbee_data        – Zeitreihe Zigbee-Sensorwerte (INSERT)
+#     id         INT PK AUTO
+#     mac        CHAR(8)      Zugehöriger Gateway
+#     addr       VARCHAR(8)   Zigbee-Kurzadresse
+#     cluster    VARCHAR(32)  Cluster-Name: temperature/humidity/illuminance/on_off/occupancy
+#     ts         DATETIME(3)  Messzeitpunkt (ms-Auflösung)
+#     value      DOUBLE       Skalierter Hauptwert (°C, %, lx, 0/1)
+#     raw_json   TEXT         Original-JSON-Payload
+#
+# Reconnect: _db_cursor() ruft ping(reconnect=True) vor jedem Statement.
+# Thread-Safety: Alle DB-Operationen laufen unter _db_lock.
+# ─────────────────────────────────────────────────────────────────────────────
+_db_lock = threading.Lock()
+_db_conn = None
+
+
+def _db_connect():
+    return pymysql.connect(
+        host=DB_HOST, user=DB_USER, password=DB_PASS, database=DB_NAME,
+        charset="utf8mb4", autocommit=True,
+        connect_timeout=10,
+    )
+
+
+def _db_init():
+    """Tabellen anlegen falls nicht vorhanden."""
+    global _db_conn
+    _db_conn = _db_connect()
+    cur = _db_conn.cursor()
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS esp32_gateways (
+            mac        CHAR(8)      NOT NULL,
+            status     VARCHAR(16)  NOT NULL DEFAULT 'offline',
+            last_seen  DATETIME,
+            PRIMARY KEY (mac)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS esp32_vitals (
+            id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            mac        CHAR(8)      NOT NULL,
+            ts         DATETIME(3)  NOT NULL,
+            bpm        SMALLINT UNSIGNED,
+            rpm        SMALLINT UNSIGNED,
+            bpm_cat    TINYINT UNSIGNED,
+            rpm_cat    TINYINT UNSIGNED,
+            radar_status TINYINT UNSIGNED,
+            INDEX (mac, ts)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS esp32_zigbee_devices (
+            mac        CHAR(8)      NOT NULL,
+            addr       VARCHAR(8)   NOT NULL,
+            ieee       VARCHAR(24)  NOT NULL DEFAULT '',
+            name       VARCHAR(64)  NOT NULL DEFAULT '',
+            last_seen  DATETIME,
+            PRIMARY KEY (mac, addr)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    cur.execute("""
+        CREATE TABLE IF NOT EXISTS esp32_zigbee_data (
+            id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+            mac        CHAR(8)      NOT NULL,
+            addr       VARCHAR(8)   NOT NULL,
+            cluster    VARCHAR(32)  NOT NULL,
+            ts         DATETIME(3)  NOT NULL,
+            value      DOUBLE,
+            raw_json   TEXT,
+            INDEX (mac, addr, cluster, ts)
+        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+    """)
+
+    cur.close()
+    log.info("DB initialisiert auf %s/%s", DB_HOST, DB_NAME)
+
+
+def _db_cursor():
+    """Gibt einen Cursor zurück, reconnectet bei Bedarf."""
+    global _db_conn
+    try:
+        _db_conn.ping(reconnect=True)
+    except Exception:
+        _db_conn = _db_connect()
+    return _db_conn.cursor()
+
+
+def db_upsert_gateway(mac, status):
+    with _db_lock:
+        try:
+            cur = _db_cursor()
+            cur.execute("""
+                INSERT INTO esp32_gateways (mac, status, last_seen)
+                VALUES (%s, %s, NOW())
+                ON DUPLICATE KEY UPDATE status=VALUES(status), last_seen=NOW()
+            """, (mac, status))
+            cur.close()
+        except Exception as e:
+            log.warning("DB gateway upsert: %s", e)
+
+
+def db_insert_vitals(mac, data):
+    with _db_lock:
+        try:
+            cur = _db_cursor()
+            cur.execute("""
+                INSERT INTO esp32_vitals
+                    (mac, ts, bpm, rpm, bpm_cat, rpm_cat, radar_status)
+                VALUES (%s, NOW(3), %s, %s, %s, %s, %s)
+            """, (mac,
+                  data.get("bpm"), data.get("rpm"),
+                  data.get("bpm_cat"), data.get("rpm_cat"),
+                  data.get("status")))
+            cur.close()
+        except Exception as e:
+            log.warning("DB vitals insert: %s", e)
+
+
+def db_upsert_zigbee_device(mac, addr, ieee, name):
+    with _db_lock:
+        try:
+            cur = _db_cursor()
+            cur.execute("""
+                INSERT INTO esp32_zigbee_devices (mac, addr, ieee, name, last_seen)
+                VALUES (%s, %s, %s, %s, NOW())
+                ON DUPLICATE KEY UPDATE ieee=VALUES(ieee), name=VALUES(name), last_seen=NOW()
+            """, (mac, addr, ieee, name))
+            cur.close()
+        except Exception as e:
+            log.warning("DB zigbee device upsert: %s", e)
+
+
+def db_insert_zigbee_data(mac, addr, cluster, raw, value):
+    with _db_lock:
+        try:
+            cur = _db_cursor()
+            cur.execute("""
+                INSERT INTO esp32_zigbee_data
+                    (mac, addr, cluster, ts, value, raw_json)
+                VALUES (%s, %s, %s, NOW(3), %s, %s)
+            """, (mac, addr, cluster, value, json.dumps(raw)))
+            cur.close()
+            # last_seen aktualisieren
+            cur2 = _db_cursor()
+            cur2.execute("""
+                UPDATE esp32_zigbee_devices SET last_seen=NOW()
+                WHERE mac=%s AND addr=%s
+            """, (mac, addr))
+            cur2.close()
+        except Exception as e:
+            log.warning("DB zigbee data insert: %s", e)
+
+
+def _extract_value(cluster, raw):
+    """Numerischen Hauptwert aus raw-Payload extrahieren."""
+    if cluster == "temperature":
+        return raw.get("raw", 0) / 100.0
+    if cluster == "humidity":
+        return raw.get("raw", 0) / 100.0
+    if cluster == "illuminance":
+        return raw.get("raw")
+    if cluster == "on_off":
+        return raw.get("v")
+    if cluster == "occupancy":
+        return raw.get("occ")
+    return None
+
 
 # ── Kategorien-Mapping (bpm_cat / rpm_cat: 0-3) ──────────────────────────────
 CAT = {0: "none", 1: "normal", 2: "fast", 3: "slow"}
@@ -230,6 +436,7 @@ def _on_message(client, userdata, msg):
         if rest == "status":
             gw["status"] = raw.strip()
             log.info("[%s] status = %s", mac, raw.strip())
+            db_upsert_gateway(mac, raw.strip())
             if raw.strip() == "online":
                 _publish_mr60_discovery(mac)
 
@@ -242,6 +449,7 @@ def _on_message(client, userdata, msg):
                 data["status_str"]   = STATUS_MAP.get(data.get("status"), "?")
                 data["ts"] = datetime.utcnow().isoformat() + "Z"
                 gw["vitals"] = data
+                db_insert_vitals(mac, data)
                 log.debug("[%s] vitals bpm=%d rpm=%d",
                           mac, data.get("bpm", -1), data.get("rpm", -1))
             except json.JSONDecodeError:
@@ -256,13 +464,15 @@ def _on_message(client, userdata, msg):
                 dev_key = f"{mac}/{addr}"
                 if addr not in gw["devices"]:
                     gw["devices"][addr] = {}
+                ieee = data.get("ieee", "?")
+                name = _names.get(dev_key, addr)
                 gw["devices"][addr].update({
-                    "ieee":      data.get("ieee", "?"),
+                    "ieee":      ieee,
                     "last_seen": datetime.utcnow().isoformat() + "Z",
-                    "name":      _names.get(dev_key, addr),
+                    "name":      name,
                 })
-                log.info("[%s] Zigbee join: %s ieee=%s",
-                         mac, addr, data.get("ieee", "?"))
+                db_upsert_zigbee_device(mac, addr, ieee, name)
+                log.info("[%s] Zigbee join: %s ieee=%s", mac, addr, ieee)
             except json.JSONDecodeError:
                 pass
 
@@ -280,6 +490,8 @@ def _on_message(client, userdata, msg):
                     "raw": payload,
                     "ts":  datetime.utcnow().isoformat() + "Z",
                 }
+                value = _extract_value(cluster, payload)
+                db_insert_zigbee_data(mac, addr, cluster, payload, value)
                 # HA-Discovery beim ersten Paket je Cluster
                 disc_key = f"disc_{mac}_{addr}_{cluster}"
                 if not userdata.get(disc_key):
@@ -477,6 +689,7 @@ def _run_web(port):
 
 # ── Main ──────────────────────────────────────────────────────────────────────
 def main():
+    _db_init()
     _load_names()
 
     global _client
