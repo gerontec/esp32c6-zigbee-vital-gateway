@@ -9,6 +9,8 @@
 #include "app-common/zap-generated/ids/Clusters.h"
 #include "app-common/zap-generated/ids/Attributes.h"
 
+using namespace esp_matter;
+
 #define TAG "matter_ep"
 
 static uint16_t s_ep_occupancy = 0;
