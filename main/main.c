@@ -9,7 +9,7 @@
 #include "esp_event.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
-#include "mr60bha1.h"
+#include "mr60bha2.h"
 #include "ha_mqtt.h"
 #include "zb_gateway.h"
 
@@ -22,7 +22,7 @@
 #define MQTT_USER        NULL
 #define MQTT_PASS        NULL
 
-/* MR60BHA1 UART-Pins (ESP32-C6 DevKit) */
+/* MR60BHA2 UART-Pins (ESP32-C6 DevKit) */
 #define MR60_UART        UART_NUM_1
 #define MR60_TX_PIN      4
 #define MR60_RX_PIN      5
@@ -76,7 +76,7 @@ static void wifi_init(void) {
                         pdFALSE, pdTRUE, portMAX_DELAY);
 }
 
-/* ── MR60BHA1-Callback → MQTT ───────────────────────────────────────────── */
+/* ── MR60BHA2-Callback → MQTT ───────────────────────────────────────────── */
 static void on_radar_frame(const mr60_data_t *d) {
     ha_mqtt_publish_vitals(d);
 }
@@ -133,9 +133,9 @@ void app_main(void) {
     ha_mqtt_set_cmd_cb(on_mqtt_cmd);
     ESP_ERROR_CHECK(ha_mqtt_init(MQTT_BROKER_URI, MQTT_USER, MQTT_PASS));
 
-    /* 3. MR60BHA1 Radar */
-    ESP_ERROR_CHECK(mr60_init(MR60_UART, MR60_TX_PIN, MR60_RX_PIN,
-                              on_radar_frame));
+    /* 3. MR60BHA2 Radar (60 GHz, UART 115200, TX=GPIO4 RX=GPIO5) */
+    ESP_ERROR_CHECK(mr60bha2_init(MR60_UART, MR60_TX_PIN, MR60_RX_PIN,
+                                  on_radar_frame));
 
     /* 4. Zigbee-Koordinator (startet eigenen Task) */
     zb_gateway_start();

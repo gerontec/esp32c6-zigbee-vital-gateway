@@ -1,7 +1,7 @@
 idf_component_register(
     SRCS
         "main.c"
-        "mr60bha1.c"
+        "mr60bha2.c"
         "ha_mqtt.c"
         "zb_gateway.c"
     INCLUDE_DIRS "."
