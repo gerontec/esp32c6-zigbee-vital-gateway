@@ -1,10 +1,4 @@
-## ESP-IDF Component Manager Manifest
+## esp_matter kommt via EXTRA_COMPONENT_DIRS (lokale Installation in ESP_MATTER_PATH)
 dependencies:
   idf:
     version: ">=5.1.0"
-  espressif/esp_matter:
-    version: ">=1.3.0"
-  espressif/esp_insights:
-    version: "*"
-    rules:
-      - if: "idf_version >=5.0"
