@@ -1,12 +1,19 @@
 # ESP32-C6 Zigbee Vital Signs Gateway
 
-An ESP32-C6 firmware that replaces a USB Zigbee dongle (e.g. Sonoff Zigbee 3.0) and adds 60 GHz mmWave vital-sign sensing, all published to Home Assistant via MQTT.
+Two firmware variants for the same ESP32-C6 DevKit + Seeed MR60BHA2 radar hardware.
+
+| Variant | Transport | Controller | Docs |
+|---|---|---|---|
+| **Zigbee** (this README) | WiFi + MQTT | Home Assistant | below |
+| **Matter over Thread** | Thread 802.15.4 | Apple Home, Google Home, chip-tool | [matter/matter.md](matter/matter.md) |
 
 ```
-MR60BHA1 ──UART──► ESP32-C6 ──WiFi/MQTT──► Home Assistant
+MR60BHA2 ──UART──► ESP32-C6 ──WiFi/MQTT──► Home Assistant      (Zigbee variant)
 Zigbee devices ──802.15.4──► ESP32-C6
                                  │
                             HTTP :80 (device mapping UI)
+
+MR60BHA2 ──UART──► ESP32-C6 ──Thread (802.15.4)──► Border Router ──► Matter Controller  (Matter variant)
 ```
 
 ## Features
@@ -14,7 +21,7 @@ Zigbee devices ──802.15.4──► ESP32-C6
 | Feature | Details |
 |---|---|
 | Zigbee coordinator | Native 802.15.4 radio on ESP32-C6, no USB dongle needed |
-| Vital signs radar | Seeed MR60BHA1 – heartbeat & breathing rate at up to 1.5 m |
+| Vital signs radar | Seeed MR60BHA2 – heartbeat & breathing rate at up to 1.5 m |
 | MQTT bridge | All Zigbee sensor data → HA via MQTT, including auto-discovery |
 | Web UI | Device mapping on port 80 – assign friendly names, open permit-join |
 | REST API | `/api/devices`, `/api/vitals`, `POST /api/device` |
@@ -26,12 +33,12 @@ Zigbee devices ──802.15.4──► ESP32-C6
 | Component | Notes |
 |---|---|
 | ESP32-C6 DevKit | Any board with exposed UART1 pins |
-| Seeed MR60BHA1 | 60 GHz mmWave radar, 3.3 V UART, 5 V supply via VIN |
+| Seeed MR60BHA2 | 60 GHz mmWave radar, 3.3 V UART, 5 V supply via VIN |
 | Boot button | Already on most DevKits (GPIO9) – triggers permit-join |
 
-### Wiring (MR60BHA1 → ESP32-C6)
+### Wiring (MR60BHA2 → ESP32-C6)
 
-| MR60BHA1 pin | ESP32-C6 pin |
+| MR60BHA2 pin | ESP32-C6 pin |
 |---|---|
 | TX | GPIO 5 (RX1) |
 | RX | GPIO 4 (TX1) |
@@ -64,7 +71,7 @@ Open `main/main.c` and edit the constants at the top:
 #define MQTT_USER        NULL                     // or "username"
 #define MQTT_PASS        NULL                     // or "password"
 
-// MR60BHA1 UART pins
+// MR60BHA2 UART pins
 #define MR60_UART        UART_NUM_1
 #define MR60_TX_PIN      4    // ESP TX → radar RX
 #define MR60_RX_PIN      5    // ESP RX ← radar TX
@@ -220,7 +227,7 @@ zigbee-vital-sensor/
 └── main/
     ├── idf_component.yml       # Zigbee SDK dependencies
     ├── main.c                  # app_main: WiFi → MQTT → radar → Zigbee → web
-    ├── mr60bha1.h / .c         # MR60BHA1 UART driver (FreeRTOS task)
+    ├── mr60bha1.h / .c         # MR60BHA2 UART driver (FreeRTOS task)
     ├── ha_mqtt.h / .c          # MQTT client + HA auto-discovery
     ├── zb_gateway.h / .c       # Zigbee coordinator, ZCL dispatch
     └── web_server.h / .c       # HTTP server on port 80
