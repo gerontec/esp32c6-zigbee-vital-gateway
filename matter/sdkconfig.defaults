@@ -23,5 +23,18 @@ CONFIG_PARTITION_TABLE_CUSTOM_FILENAME="partitions.csv"
 # Logging
 CONFIG_LOG_DEFAULT_LEVEL_INFO=y
 
+# Flash: ESP32-C6 DevKit hat 4MB
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
+CONFIG_ESPTOOLPY_FLASHSIZE="4MB"
+
+# Thread-only: WiFi deaktivieren (ESP32-C6 macht Thread ODER WiFi, nicht beides)
+# Matter-SDK: WiFi endpoint_id != Thread endpoint_id (0!=1)
+CONFIG_CHIP_WIFI_NETWORK_ENDPOINT_ID=1
+CONFIG_ENABLE_WIFI_STATION=n
+CONFIG_ENABLE_WIFI_AP=n
+
+# mbedTLS: HKDF required by Matter crypto (CHIPCryptoPALmbedTLS)
+CONFIG_MBEDTLS_HKDF_C=y
+
 # Watchdog
 CONFIG_ESP_TASK_WDT_TIMEOUT_S=30

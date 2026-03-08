@@ -15,7 +15,7 @@ using namespace esp_matter;
 
 static uint16_t s_ep_occupancy = 0;
 
-esp_err_t matter_endpoints_init(void)
+extern "C" esp_err_t matter_endpoints_init(void)
 {
     esp_matter::node::config_t node_cfg = {};
     esp_matter::node_t *node = esp_matter::node::create(&node_cfg, NULL, NULL);
@@ -49,7 +49,7 @@ esp_err_t matter_endpoints_init(void)
     return esp_matter::start(NULL);
 }
 
-esp_err_t matter_update_vitals(uint16_t bpm, uint16_t rpm,
+extern "C" esp_err_t matter_update_vitals(uint16_t bpm, uint16_t rpm,
                                 uint8_t bpm_cat, uint8_t rpm_cat,
                                 uint8_t radar_status)
 {
