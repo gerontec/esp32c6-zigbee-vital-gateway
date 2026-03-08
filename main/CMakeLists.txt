@@ -4,7 +4,6 @@ idf_component_register(
         "mr60bha1.c"
         "ha_mqtt.c"
         "zb_gateway.c"
-        "web_server.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash
@@ -13,7 +12,6 @@ idf_component_register(
         esp_event
         mqtt
         driver
-        esp_http_server
         esp_zigbee_core
         freertos
         log

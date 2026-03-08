@@ -1,0 +1,21 @@
+# Mosquitto läuft bereits als systemd-Service auf Port 1883.
+# Nur der Gateway-Service wird hier als Container gestartet.
+
+services:
+  gateway:
+    build: .
+    image: esp32-gw-gateway
+    container_name: esp32gw-service
+    restart: always
+    network_mode: host          # direkt auf localhost:1883 zugreifen
+    environment:
+      MQTT_HOST: "127.0.0.1"
+      MQTT_PORT: "1883"
+      WEB_PORT: "8080"
+      DEVICES_FILE: /data/devices.json
+      LOG_LEVEL: INFO
+    volumes:
+      - gateway-data:/data
+
+volumes:
+  gateway-data:

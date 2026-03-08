@@ -1,4 +1,5 @@
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "freertos/event_groups.h"
@@ -7,27 +8,28 @@
 #include "esp_netif.h"
 #include "esp_event.h"
 #include "nvs_flash.h"
+#include "driver/gpio.h"
 #include "mr60bha1.h"
 #include "ha_mqtt.h"
 #include "zb_gateway.h"
-#include "web_server.h"
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  KONFIGURATION – hier anpassen
  * ══════════════════════════════════════════════════════════════════════════ */
 #define WIFI_SSID        "MeinNetz"
 #define WIFI_PASSWORD    "MeinPasswort"
-#define MQTT_BROKER_URI  "mqtt://192.168.1.10"   /* IP des HA-MQTT-Brokers  */
-#define MQTT_USER        NULL                     /* oder "user"             */
-#define MQTT_PASS        NULL                     /* oder "passwort"         */
+#define MQTT_BROKER_URI  "mqtt://192.168.1.10"
+#define MQTT_USER        NULL
+#define MQTT_PASS        NULL
 
 /* MR60BHA1 UART-Pins (ESP32-C6 DevKit) */
 #define MR60_UART        UART_NUM_1
 #define MR60_TX_PIN      4
 #define MR60_RX_PIN      5
 
-/* Permit-Join-Taste (Boot-Taste auf den meisten DevKits = GPIO9) */
+/* Permit-Join-Taste (Boot-Taste = GPIO9) */
 #define BTN_PERMIT_JOIN  9
+#define PERMIT_JOIN_SECS 180
 /* ══════════════════════════════════════════════════════════════════════════ */
 
 #define TAG "main"
@@ -62,10 +64,7 @@ static void wifi_init(void) {
                                 wifi_event_handler, NULL);
 
     wifi_config_t wcfg = {
-        .sta = {
-            .ssid     = WIFI_SSID,
-            .password = WIFI_PASSWORD,
-        }
+        .sta = { .ssid = WIFI_SSID, .password = WIFI_PASSWORD }
     };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
     ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wcfg));
@@ -82,7 +81,22 @@ static void on_radar_frame(const mr60_data_t *d) {
     ha_mqtt_publish_vitals(d);
 }
 
-/* ── Permit-Join-Taste ──────────────────────────────────────────────────── */
+/* ── MQTT-Kommando-Handler (Befehle vom Linux-Host) ─────────────────────── */
+static void on_mqtt_cmd(const char *cmd, const char *payload, int len) {
+    if (strcmp(cmd, "permit_join") == 0) {
+        /* Payload: Anzahl Sekunden als ASCII-Dezimalzahl, z.B. "180" oder "0" */
+        char buf[8] = {0};
+        int n = len < (int)(sizeof(buf) - 1) ? len : (int)(sizeof(buf) - 1);
+        memcpy(buf, payload, n);
+        uint8_t secs = (uint8_t)atoi(buf);
+        ESP_LOGI(TAG, "cmd permit_join %u s", secs);
+        zb_gateway_permit_join(secs);
+    } else {
+        ESP_LOGW(TAG, "Unbekanntes Kommando: %s", cmd);
+    }
+}
+
+/* ── Permit-Join-Taste (Notfall ohne Linux-Host) ─────────────────────────── */
 static void btn_task(void *arg) {
     gpio_set_direction(BTN_PERMIT_JOIN, GPIO_MODE_INPUT);
     gpio_set_pull_mode(BTN_PERMIT_JOIN, GPIO_PULLUP_ONLY);
@@ -91,36 +105,17 @@ static void btn_task(void *arg) {
     while (1) {
         bool cur = gpio_get_level(BTN_PERMIT_JOIN);
         if (last && !cur) {  /* fallende Flanke */
-            ESP_LOGI(TAG, "Permit Join 180s geöffnet");
-            zb_gateway_permit_join(180);
+            ESP_LOGI(TAG, "Permit Join %d s (Taste)", PERMIT_JOIN_SECS);
+            zb_gateway_permit_join(PERMIT_JOIN_SECS);
         }
         last = cur;
         vTaskDelay(pdMS_TO_TICKS(50));
     }
 }
 
-/* ── Haupt-Statusloop ───────────────────────────────────────────────────── */
-static void status_task(void *arg) {
-    while (1) {
-        vTaskDelay(pdMS_TO_TICKS(30000));  /* alle 30 s */
-        mr60_data_t d;
-        mr60_get(&d);
-        ESP_LOGI(TAG,
-            "Status: WiFi=%s MQTT=%s Radar=%s | "
-            "Herz=%d BPM Atm=%d/min | Frames ok=%lu err=%lu",
-            "ok",
-            ha_mqtt_connected() ? "ok" : "getrennt",
-            d.status == 2 ? "ok" : "warten",
-            d.bpm, d.rpm,
-            (unsigned long)d.frames_ok,
-            (unsigned long)d.frames_err);
-        zb_gateway_list_devices();
-    }
-}
-
 /* ── app_main ───────────────────────────────────────────────────────────── */
 void app_main(void) {
-    ESP_LOGI(TAG, "=== Vital Signs Gateway – ESP32-C6 ===");
+    ESP_LOGI(TAG, "=== ESP32-C6 Radio Bridge – minimal ===");
 
     /* NVS (wird von WiFi und Zigbee benötigt) */
     esp_err_t ret = nvs_flash_init();
@@ -134,7 +129,8 @@ void app_main(void) {
     /* 1. WiFi */
     wifi_init();
 
-    /* 2. MQTT */
+    /* 2. MQTT-Bridge (kein HA-spezifisches Wissen) */
+    ha_mqtt_set_cmd_cb(on_mqtt_cmd);
     ESP_ERROR_CHECK(ha_mqtt_init(MQTT_BROKER_URI, MQTT_USER, MQTT_PASS));
 
     /* 3. MR60BHA1 Radar */
@@ -144,19 +140,16 @@ void app_main(void) {
     /* 4. Zigbee-Koordinator (startet eigenen Task) */
     zb_gateway_start();
 
-    /* 5. Webserver auf Port 80 */
-    ESP_ERROR_CHECK(web_server_start());
-
-    /* 6. Hilfstasks */
-    xTaskCreate(btn_task,    "btn",    2048, NULL, 3, NULL);
-    xTaskCreate(status_task, "status", 3072, NULL, 2, NULL);
+    /* 5. Permit-Join-Taste als Fallback */
+    xTaskCreate(btn_task, "btn", 2048, NULL, 3, NULL);
 
     ESP_LOGI(TAG,
         "Gestartet.\n"
-        "  MQTT-Broker : %s\n"
-        "  Webserver   : http://<IP>/\n"
-        "  Zigbee      : Koordinator aktiv\n"
-        "  Permit Join : Boot-Taste (GPIO%d) drücken\n"
-        "  HA-Topics   : vital-gw-XXXXXXXX/#",
-        MQTT_BROKER_URI, BTN_PERMIT_JOIN);
+        "  MQTT-Broker  : %s\n"
+        "  Base-Topic   : %s\n"
+        "  Zigbee       : Koordinator aktiv\n"
+        "  Permit Join  : Boot-Taste (GPIO%d) ODER MQTT cmd/permit_join",
+        MQTT_BROKER_URI,
+        ha_mqtt_base_topic(),
+        BTN_PERMIT_JOIN);
 }
