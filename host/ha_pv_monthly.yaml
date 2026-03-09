@@ -1,0 +1,336 @@
+# HA Package: PV monatliche Zähler aus pv_zaehl2
+# Einfügen in configuration.yaml:
+#   homeassistant:
+#     packages:
+#       pv_monthly: !include packages/pv_monthly.yaml
+
+sensor:
+  # ── Monat-Label ──────────────────────────────────────────────────────────
+  - platform: sql
+    db_url: mysql://gh:a12345@192.168.178.218/wagodb
+    scan_interval: 3600
+    queries:
+
+      # Aktueller Monat
+      - name: pv_m00_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 0
+          ) t
+        column: monat
+
+      - name: pv_m01_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 1
+          ) t
+        column: monat
+
+      - name: pv_m02_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 2
+          ) t
+        column: monat
+
+      - name: pv_m03_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 3
+          ) t
+        column: monat
+
+      - name: pv_m04_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 4
+          ) t
+        column: monat
+
+      - name: pv_m05_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 5
+          ) t
+        column: monat
+
+      - name: pv_m06_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 6
+          ) t
+        column: monat
+
+      - name: pv_m07_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 7
+          ) t
+        column: monat
+
+      - name: pv_m08_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 8
+          ) t
+        column: monat
+
+      - name: pv_m09_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 9
+          ) t
+        column: monat
+
+      - name: pv_m10_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 10
+          ) t
+        column: monat
+
+      - name: pv_m11_monat
+        query: >
+          SELECT monat FROM (
+            SELECT substr(datum,1,7) AS monat FROM pv_zaehl2
+            GROUP BY 1 ORDER BY 1 DESC LIMIT 1 OFFSET 11
+          ) t
+        column: monat
+
+  # ── Monatliche Deltas (Zählerstand Ende - Anfang Monat) ──────────────────
+  - platform: sql
+    db_url: mysql://gh:a12345@192.168.178.218/wagodb
+    scan_interval: 3600
+    queries:
+
+      - name: pv_m00_bezug
+        query: &bezug_query >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 0
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m01_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 1
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m02_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 2
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m03_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 3
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m04_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 4
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m05_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 5
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m06_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 6
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m07_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 7
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m08_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 8
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m09_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 9
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m10_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 10
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m11_bezug
+        query: >
+          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 11
+        column: bezug_kwh
+        unit_of_measurement: kWh
+
+  - platform: sql
+    db_url: mysql://gh:a12345@192.168.178.218/wagodb
+    scan_interval: 3600
+    queries:
+
+      - name: pv_m00_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 0
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m01_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 1
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m02_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 2
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m03_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 3
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m04_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 4
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m05_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 5
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m06_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 6
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m07_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 7
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m08_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 8
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m09_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 9
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m10_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 10
+        column: einspeis_kwh
+        unit_of_measurement: kWh
+
+      - name: pv_m11_einspeis
+        query: >
+          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+            SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 11
+        column: einspeis_kwh
+        unit_of_measurement: kWh

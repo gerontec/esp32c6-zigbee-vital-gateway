@@ -1,0 +1,38 @@
+# Lovelace Dashboard Card: PV Monatliche Zähler
+# In HA Dashboard → Edit → Raw Config Editor einfügen
+
+title: PV Monatszähler
+type: vertical-stack
+cards:
+  - type: markdown
+    title: PV Monatszähler (pv_zaehl2)
+    content: >
+      | Monat | Bezug kWh | Einspeisung kWh |
+      |-------|----------:|----------------:|
+      | {{ states('sensor.pv_m00_monat') }} | **{{ states('sensor.pv_m00_bezug') }}** | **{{ states('sensor.pv_m00_einspeis') }}** |
+      | {{ states('sensor.pv_m01_monat') }} | {{ states('sensor.pv_m01_bezug') }} | {{ states('sensor.pv_m01_einspeis') }} |
+      | {{ states('sensor.pv_m02_monat') }} | {{ states('sensor.pv_m02_bezug') }} | {{ states('sensor.pv_m02_einspeis') }} |
+      | {{ states('sensor.pv_m03_monat') }} | {{ states('sensor.pv_m03_bezug') }} | {{ states('sensor.pv_m03_einspeis') }} |
+      | {{ states('sensor.pv_m04_monat') }} | {{ states('sensor.pv_m04_bezug') }} | {{ states('sensor.pv_m04_einspeis') }} |
+      | {{ states('sensor.pv_m05_monat') }} | {{ states('sensor.pv_m05_bezug') }} | {{ states('sensor.pv_m05_einspeis') }} |
+      | {{ states('sensor.pv_m06_monat') }} | {{ states('sensor.pv_m06_bezug') }} | {{ states('sensor.pv_m06_einspeis') }} |
+      | {{ states('sensor.pv_m07_monat') }} | {{ states('sensor.pv_m07_bezug') }} | {{ states('sensor.pv_m07_einspeis') }} |
+      | {{ states('sensor.pv_m08_monat') }} | {{ states('sensor.pv_m08_bezug') }} | {{ states('sensor.pv_m08_einspeis') }} |
+      | {{ states('sensor.pv_m09_monat') }} | {{ states('sensor.pv_m09_bezug') }} | {{ states('sensor.pv_m09_einspeis') }} |
+      | {{ states('sensor.pv_m10_monat') }} | {{ states('sensor.pv_m10_bezug') }} | {{ states('sensor.pv_m10_einspeis') }} |
+      | {{ states('sensor.pv_m11_monat') }} | {{ states('sensor.pv_m11_bezug') }} | {{ states('sensor.pv_m11_einspeis') }} |
+
+  - type: statistics-graph
+    title: Monatlicher Bezug kWh
+    period:
+      calendar:
+        period: month
+    entities:
+      - sensor.pv_m00_bezug
+      - sensor.pv_m01_bezug
+      - sensor.pv_m02_bezug
+      - sensor.pv_m03_bezug
+      - sensor.pv_m04_bezug
+      - sensor.pv_m05_bezug
+    stat_types:
+      - state
