@@ -3,6 +3,7 @@ sdkconfig
 managed_components/
 .cache/
 *.bin
+!firmware/*.bin
 *.elf
 *.map
 dependencies.lock

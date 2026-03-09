@@ -8,6 +8,9 @@
 #include "zb_gateway.h"
 #include "ha_mqtt.h"
 
+/* Kanal 11-26, alle Kanäle */
+#define ESP_ZB_PRIMARY_CHANNEL_MASK (0x07FFF800U)
+
 #define TAG "zb_gw"
 #define ZB_ENDPOINT 1
 
@@ -40,52 +43,58 @@ static zb_device_t *find_or_add(uint16_t addr, const uint8_t *ieee) {
 }
 
 /* ── ZCL-Attribut-Callback ──────────────────────────────────────────────── */
-static esp_err_t zb_zcl_handler(const esp_zb_zcl_cmd_info_t *msg) {
+static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
+                                    const void *message) {
+    if (callback_id != ESP_ZB_CORE_REPORT_ATTR_CB_ID &&
+        callback_id != ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID)
+        return ESP_OK;
+
+    const esp_zb_zcl_report_attr_message_t *msg =
+        (const esp_zb_zcl_report_attr_message_t *)message;
     if (!msg) return ESP_ERR_INVALID_ARG;
 
     uint16_t addr = msg->src_address.u.short_addr;
 
     ESP_LOGD(TAG, "ZCL 0x%04x cluster 0x%04x attr 0x%04x",
-             addr, msg->cluster, msg->field_sets->attr_id);
+             addr, msg->cluster, msg->attribute.id);
 
     char payload[64];
 
     switch (msg->cluster) {
     case ESP_ZB_ZCL_CLUSTER_ID_ON_OFF: {
-        uint8_t v = *(uint8_t *)msg->field_sets->data;
+        uint8_t v = *(uint8_t *)msg->attribute.data.value;
         snprintf(payload, sizeof(payload), "{\"v\":%u}", v);
         ha_mqtt_publish_zigbee(addr, "on_off", payload);
         break;
     }
     case ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT: {
-        int16_t raw = *(int16_t *)msg->field_sets->data;
+        int16_t raw = *(int16_t *)msg->attribute.data.value;
         snprintf(payload, sizeof(payload), "{\"raw\":%d}", raw);
         ha_mqtt_publish_zigbee(addr, "temperature", payload);
         break;
     }
     case ESP_ZB_ZCL_CLUSTER_ID_REL_HUMIDITY_MEASUREMENT: {
-        uint16_t raw = *(uint16_t *)msg->field_sets->data;
+        uint16_t raw = *(uint16_t *)msg->attribute.data.value;
         snprintf(payload, sizeof(payload), "{\"raw\":%u}", raw);
         ha_mqtt_publish_zigbee(addr, "humidity", payload);
         break;
     }
     case ESP_ZB_ZCL_CLUSTER_ID_ILLUMINANCE_MEASUREMENT: {
-        uint16_t raw = *(uint16_t *)msg->field_sets->data;
+        uint16_t raw = *(uint16_t *)msg->attribute.data.value;
         snprintf(payload, sizeof(payload), "{\"raw\":%u}", raw);
         ha_mqtt_publish_zigbee(addr, "illuminance", payload);
         break;
     }
     case ESP_ZB_ZCL_CLUSTER_ID_OCCUPANCY_SENSING: {
-        uint8_t occ = *(uint8_t *)msg->field_sets->data;
+        uint8_t occ = *(uint8_t *)msg->attribute.data.value;
         snprintf(payload, sizeof(payload), "{\"occ\":%u}", occ);
         ha_mqtt_publish_zigbee(addr, "occupancy", payload);
         break;
     }
     default: {
-        /* Unbekannte Cluster → rohe Cluster-/Attribut-IDs */
         snprintf(payload, sizeof(payload),
                  "{\"cluster\":\"0x%04x\",\"attr\":\"0x%04x\"}",
-                 msg->cluster, msg->field_sets->attr_id);
+                 msg->cluster, msg->attribute.id);
         ha_mqtt_publish_zigbee(addr, "raw", payload);
         break;
     }
@@ -132,7 +141,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
         } else {
             ESP_LOGW(TAG, "Netzwerkbildung fehlgeschlagen – erneuter Versuch");
             esp_zb_scheduler_alarm(
-                (esp_zb_callback_t)esp_zb_bdb_start_top_level_commissioning,
+                (esp_zb_callback_t)(void *)esp_zb_bdb_start_top_level_commissioning,
                 ESP_ZB_BDB_MODE_NETWORK_FORMATION, 1000);
         }
         break;
@@ -188,14 +197,18 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
 
 /* ── Zigbee-Haupttask ───────────────────────────────────────────────────── */
 static void zb_task(void *arg) {
-    esp_zb_cfg_t cfg = ESP_ZB_ZC_CONFIG();
+    esp_zb_cfg_t cfg = {
+        .esp_zb_role        = ESP_ZB_DEVICE_TYPE_COORDINATOR,
+        .install_code_policy = false,
+        .nwk_cfg.zczr_cfg   = { .max_children = 10 },
+    };
     esp_zb_init(&cfg);
 
     esp_zb_on_off_switch_cfg_t sw_cfg = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
     esp_zb_ep_list_t *ep = esp_zb_on_off_switch_ep_create(ZB_ENDPOINT, &sw_cfg);
     esp_zb_device_register(ep);
 
-    esp_zb_core_action_handler_register(zb_zcl_handler);
+    esp_zb_core_action_handler_register(zb_action_handler);
     esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
 
     ESP_ERROR_CHECK(esp_zb_start(false));
@@ -208,8 +221,8 @@ void zb_gateway_start(void) {
     s_dev_mutex = xSemaphoreCreateMutex();
 
     esp_zb_platform_config_t pcfg = {
-        .radio_config = ESP_ZB_DEFAULT_RADIO_CONFIG(),
-        .host_config  = ESP_ZB_DEFAULT_HOST_CONFIG(),
+        .radio_config = { .radio_mode = RADIO_MODE_NATIVE },
+        .host_config  = { .host_connection_mode = HOST_CONNECTION_MODE_NONE },
     };
     ESP_ERROR_CHECK(esp_zb_platform_config(&pcfg));
     xTaskCreate(zb_task, "zb_main", 8192, NULL, 5, NULL);

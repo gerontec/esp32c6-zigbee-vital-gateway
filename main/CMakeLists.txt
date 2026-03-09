@@ -12,7 +12,7 @@ idf_component_register(
         esp_event
         mqtt
         driver
-        esp_zigbee_core
+        espressif__esp-zigbee-lib
         freertos
         log
 )
