@@ -9,7 +9,7 @@ cards:
     content: >
       | Monat | Bezug kWh | Einspeis kWh | Peak kWp |
       |-------|----------:|-------------:|---------:|
-      | {{ states('sensor.pv_m00_monat') }} | **{{ states('sensor.pv_m00_bezug') }}** | **{{ states('sensor.pv_m00_einspeis') }}** | **{{ states('sensor.pv_m00_kwp') }}** |
+      | {{ states('sensor.pv_m00_monat') }} ~ | **{{ states('sensor.pv_m00_bezug') }}** | **{{ states('sensor.pv_m00_einspeis') }}** | **{{ states('sensor.pv_m00_kwp') }}** |
       | {{ states('sensor.pv_m01_monat') }} | {{ states('sensor.pv_m01_bezug') }} | {{ states('sensor.pv_m01_einspeis') }} | {{ states('sensor.pv_m01_kwp') }} |
       | {{ states('sensor.pv_m02_monat') }} | {{ states('sensor.pv_m02_bezug') }} | {{ states('sensor.pv_m02_einspeis') }} | {{ states('sensor.pv_m02_kwp') }} |
       | {{ states('sensor.pv_m03_monat') }} | {{ states('sensor.pv_m03_bezug') }} | {{ states('sensor.pv_m03_einspeis') }} | {{ states('sensor.pv_m03_kwp') }} |

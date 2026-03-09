@@ -115,8 +115,10 @@ sensor:
     queries:
 
       - name: pv_m00_bezug
-        query: &bezug_query >
-          SELECT ROUND(bezug - LAG(bezug) OVER (ORDER BY monat), 1) AS bezug_kwh FROM (
+        query: >
+          SELECT ROUND(
+            (bezug - LAG(bezug) OVER (ORDER BY monat)) * DAY(LAST_DAY(NOW())) / DAY(NOW()),
+            1) AS bezug_kwh FROM (
             SELECT substr(datum,1,7) AS monat, MAX(bezug) AS bezug
             FROM pv_zaehl2 GROUP BY 1
           ) t ORDER BY monat DESC LIMIT 1 OFFSET 0
@@ -229,7 +231,9 @@ sensor:
 
       - name: pv_m00_einspeis
         query: >
-          SELECT ROUND(einspeis - LAG(einspeis) OVER (ORDER BY monat), 1) AS einspeis_kwh FROM (
+          SELECT ROUND(
+            (einspeis - LAG(einspeis) OVER (ORDER BY monat)) * DAY(LAST_DAY(NOW())) / DAY(NOW()),
+            1) AS einspeis_kwh FROM (
             SELECT substr(datum,1,7) AS monat, MAX(einspeis) AS einspeis
             FROM pv_zaehl2 GROUP BY 1
           ) t ORDER BY monat DESC LIMIT 1 OFFSET 0
