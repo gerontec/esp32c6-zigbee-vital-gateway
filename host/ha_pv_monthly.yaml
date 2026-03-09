@@ -334,3 +334,117 @@ sensor:
           ) t ORDER BY monat DESC LIMIT 1 OFFSET 11
         column: einspeis_kwh
         unit_of_measurement: kWh
+
+  # ── Peak-Leistung pro Monat (min wirkleist = max Einspeisung, in kWp) ────
+  - platform: sql
+    db_url: mysql://gh:a12345@192.168.178.218/wagodb
+    scan_interval: 3600
+    queries:
+
+      - name: pv_m00_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 0
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m01_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 1
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m02_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 2
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m03_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 3
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m04_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 4
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m05_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 5
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m06_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 6
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m07_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 7
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m08_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 8
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m09_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 9
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m10_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 10
+        column: kwp
+        unit_of_measurement: kWp
+
+      - name: pv_m11_kwp
+        query: >
+          SELECT ROUND(ABS(MIN(wirkleist)) / 1000, 2) AS kwp FROM (
+            SELECT substr(datum,1,7) AS monat, MIN(wirkleist) AS wirkleist
+            FROM pv_zaehl2 GROUP BY 1
+          ) t ORDER BY monat DESC LIMIT 1 OFFSET 11
+        column: kwp
+        unit_of_measurement: kWp
