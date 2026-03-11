@@ -3,6 +3,7 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "esp_check.h"
 #include "driver/uart.h"
 #include "mr60bha1.h"
 

@@ -232,6 +232,25 @@ void zb_gateway_permit_join(uint8_t seconds) {
     esp_zb_bdb_open_network(seconds);
 }
 
+void zb_gateway_devices_json(char *buf, size_t len) {
+    size_t pos = 0;
+    pos += snprintf(buf + pos, len - pos, "[");
+    xSemaphoreTake(s_dev_mutex, portMAX_DELAY);
+    bool first = true;
+    for (int i = 0; i < MAX_DEVICES; i++) {
+        if (!s_devices[i].used) continue;
+        const uint8_t *e = s_devices[i].ieee;
+        pos += snprintf(buf + pos, len - pos,
+            "%s{\"addr\":\"0x%04x\",\"ieee\":\"%02x:%02x:%02x:%02x:%02x:%02x:%02x:%02x\"}",
+            first ? "" : ",",
+            s_devices[i].short_addr,
+            e[7], e[6], e[5], e[4], e[3], e[2], e[1], e[0]);
+        first = false;
+    }
+    xSemaphoreGive(s_dev_mutex);
+    snprintf(buf + pos, len - pos, "]");
+}
+
 void zb_gateway_list_devices(void) {
     xSemaphoreTake(s_dev_mutex, portMAX_DELAY);
     ESP_LOGI(TAG, "Gepairte Geräte:");

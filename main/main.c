@@ -9,16 +9,18 @@
 #include "esp_event.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
+#include "esp_ota_ops.h"
 #include "mr60bha2.h"
 #include "ha_mqtt.h"
 #include "zb_gateway.h"
+#include "web_ui.h"
 
 /* ══════════════════════════════════════════════════════════════════════════
  *  KONFIGURATION – hier anpassen
  * ══════════════════════════════════════════════════════════════════════════ */
-#define WIFI_SSID        "MeinNetz"
-#define WIFI_PASSWORD    "MeinPasswort"
-#define MQTT_BROKER_URI  "mqtt://192.168.1.10"
+#define WIFI_FALLBACK_SSID  "free5G"
+#define WIFI_FALLBACK_PASS  "dach1234"
+#define MQTT_BROKER_URI     "mqtt://192.168.178.218"
 #define MQTT_USER        NULL
 #define MQTT_PASS        NULL
 
@@ -63,17 +65,53 @@ static void wifi_init(void) {
     esp_event_handler_register(IP_EVENT, IP_EVENT_STA_GOT_IP,
                                 wifi_event_handler, NULL);
 
-    wifi_config_t wcfg = {
-        .sta = { .ssid = WIFI_SSID, .password = WIFI_PASSWORD }
-    };
     ESP_ERROR_CHECK(esp_wifi_set_mode(WIFI_MODE_STA));
-    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wcfg));
     ESP_ERROR_CHECK(esp_wifi_start());
+
+    /* Scan nach offenem Netz */
+    ESP_LOGI(TAG, "Scanne nach offenem WiFi …");
+    wifi_scan_config_t scan_cfg = { .show_hidden = false };
+    esp_wifi_scan_start(&scan_cfg, true);   /* blockierend */
+
+    uint16_t ap_count = 0;
+    esp_wifi_scan_get_ap_num(&ap_count);
+
+    char open_ssid[33] = "";
+    if (ap_count > 0) {
+        wifi_ap_record_t *aps = calloc(ap_count, sizeof(wifi_ap_record_t));
+        if (aps) {
+            esp_wifi_scan_get_ap_records(&ap_count, aps);
+            for (int i = 0; i < ap_count; i++) {
+                if (aps[i].authmode == WIFI_AUTH_OPEN) {
+                    strlcpy(open_ssid, (char *)aps[i].ssid, sizeof(open_ssid));
+                    ESP_LOGI(TAG, "Offenes Netz gefunden: %s (RSSI %d)",
+                             open_ssid, aps[i].rssi);
+                    break;
+                }
+            }
+            free(aps);
+        }
+    }
+
+    wifi_config_t wcfg = {0};
+    if (open_ssid[0]) {
+        strlcpy((char *)wcfg.sta.ssid, open_ssid, sizeof(wcfg.sta.ssid));
+        /* kein Passwort – offenes Netz */
+        ESP_LOGI(TAG, "Verbinde mit offenem Netz: %s", open_ssid);
+    } else {
+        strlcpy((char *)wcfg.sta.ssid,     WIFI_FALLBACK_SSID, sizeof(wcfg.sta.ssid));
+        strlcpy((char *)wcfg.sta.password, WIFI_FALLBACK_PASS, sizeof(wcfg.sta.password));
+        ESP_LOGI(TAG, "Kein offenes Netz – Fallback: %s", WIFI_FALLBACK_SSID);
+    }
+
+    ESP_ERROR_CHECK(esp_wifi_set_config(WIFI_IF_STA, &wcfg));
     ESP_ERROR_CHECK(esp_wifi_connect());
 
-    ESP_LOGI(TAG, "Verbinde mit %s …", WIFI_SSID);
     xEventGroupWaitBits(s_wifi_events, WIFI_CONNECTED_BIT,
                         pdFALSE, pdTRUE, portMAX_DELAY);
+
+    /* Firmware als gültig markieren – verhindert OTA-Rollback */
+    esp_ota_mark_app_valid_cancel_rollback();
 }
 
 /* ── MR60BHA2-Callback → MQTT ───────────────────────────────────────────── */
@@ -140,7 +178,10 @@ void app_main(void) {
     /* 4. Zigbee-Koordinator (startet eigenen Task) */
     zb_gateway_start();
 
-    /* 5. Permit-Join-Taste als Fallback */
+    /* 5. Web-UI auf Port 80 */
+    web_ui_start();
+
+    /* 6. Permit-Join-Taste als Fallback */
     xTaskCreate(btn_task, "btn", 2048, NULL, 3, NULL);
 
     ESP_LOGI(TAG,

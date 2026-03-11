@@ -7,7 +7,7 @@
 sensor:
   # ── Monat-Label ──────────────────────────────────────────────────────────
   - platform: sql
-    db_url: mysql://gh:a12345@192.168.178.218/wagodb
+    db_url: mysql+pymysql://gh:a12345@192.168.178.218/wagodb
     scan_interval: 3600
     queries:
 
@@ -110,7 +110,7 @@ sensor:
 
   # ── Monatliche Deltas (Zählerstand Ende - Anfang Monat) ──────────────────
   - platform: sql
-    db_url: mysql://gh:a12345@192.168.178.218/wagodb
+    db_url: mysql+pymysql://gh:a12345@192.168.178.218/wagodb
     scan_interval: 3600
     queries:
 
@@ -225,7 +225,7 @@ sensor:
         unit_of_measurement: kWh
 
   - platform: sql
-    db_url: mysql://gh:a12345@192.168.178.218/wagodb
+    db_url: mysql+pymysql://gh:a12345@192.168.178.218/wagodb
     scan_interval: 3600
     queries:
 
@@ -341,7 +341,7 @@ sensor:
 
   # ── Peak-Leistung pro Monat (min wirkleist = max Einspeisung, in kWp) ────
   - platform: sql
-    db_url: mysql://gh:a12345@192.168.178.218/wagodb
+    db_url: mysql+pymysql://gh:a12345@192.168.178.218/wagodb
     scan_interval: 3600
     queries:
 

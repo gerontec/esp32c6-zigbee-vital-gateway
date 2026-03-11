@@ -10,3 +10,6 @@ void zb_gateway_permit_join(uint8_t seconds);
 
 /* Geräteliste ins Log schreiben (Debug) */
 void zb_gateway_list_devices(void);
+
+/* Geräteliste als JSON-Array in buf schreiben (thread-safe) */
+void zb_gateway_devices_json(char *buf, size_t len);
