@@ -40,3 +40,7 @@ void ha_mqtt_publish_permit_join(bool open, uint8_t seconds);
 /* Hilfsfunktionen */
 bool        ha_mqtt_connected(void);
 const char *ha_mqtt_base_topic(void);   /* gibt "gw/xxxxxxxx" zurück */
+
+/* Debug-Log via MQTT → gw/<mac>/debug  {"tag":"...","msg":"..."} */
+void ha_mqtt_logf(const char *tag, const char *fmt, ...)
+    __attribute__((format(printf, 2, 3)));

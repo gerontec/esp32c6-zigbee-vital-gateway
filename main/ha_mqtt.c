@@ -1,6 +1,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
+#include <stdarg.h>
 #include "esp_log.h"
 #include "esp_mac.h"
 #include "mqtt_client.h"
@@ -155,4 +156,27 @@ bool ha_mqtt_connected(void) {
 
 const char *ha_mqtt_base_topic(void) {
     return s_base;
+}
+
+void ha_mqtt_logf(const char *tag, const char *fmt, ...) {
+    char msg[192];
+    va_list ap;
+    va_start(ap, fmt);
+    vsnprintf(msg, sizeof(msg), fmt, ap);
+    va_end(ap);
+
+    /* JSON-Sonderzeichen im msg escapen (nur " und \) */
+    char escaped[256];
+    int j = 0;
+    for (int i = 0; msg[i] && j < (int)sizeof(escaped) - 2; i++) {
+        if (msg[i] == '"' || msg[i] == '\\') escaped[j++] = '\\';
+        escaped[j++] = msg[i];
+    }
+    escaped[j] = '\0';
+
+    char topic[64], payload[320];
+    snprintf(topic,   sizeof(topic),   "%s/debug", s_base);
+    snprintf(payload, sizeof(payload), "{\"tag\":\"%s\",\"msg\":\"%s\"}", tag, escaped);
+    pub(topic, payload, 0, 0);
+    ESP_LOGI(tag, "%s", msg);
 }

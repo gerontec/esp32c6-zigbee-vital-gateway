@@ -11,33 +11,39 @@
 
 /*
  * MR60BHA2 frame format (host-receive direction):
- *   [0x55][LEN_H][LEN_L][TYPE][CMD][DATA…][CRC]
- *   LEN (big-endian) = sizeof(TYPE) + sizeof(CMD) + sizeof(DATA)
- *   CRC = XOR of bytes [TYPE … last DATA byte]
+ *   [0x01][ID_H][ID_L][LEN_H][LEN_L][TYPE_H][TYPE_L][HDR_CRC][DATA…][DATA_CRC]
+ *   LEN      = number of DATA bytes (big-endian)
+ *   HDR_CRC  = ~(XOR of bytes 0..6)
+ *   DATA_CRC = ~(XOR of DATA bytes)
  *
- * Function types and commands (from Seeed protocol guide v1.0):
- *   TYPE 0x80  Respiratory monitoring
- *     CMD 0x05  Breath rate   data[0] = rpm (uint8)
- *     CMD 0x06  Breath wave   data[0..3] = float LE
- *     CMD 0x04  Breath cat    data[0] = MR60_CAT_*
- *   TYPE 0x81  Heart-rate monitoring
- *     CMD 0x05  Heart rate    data[0] = bpm (uint8)
- *     CMD 0x06  Heart wave    data[0..3] = float LE
- *     CMD 0x04  Heart cat     data[0] = MR60_CAT_*
- *   TYPE 0x05  Work status
- *     CMD 0x01  Status        data[0] = MR60_STATUS_*
+ * Frame types (16-bit):
+ *   0x0A14  Breath rate   data[0..3] = float LE
+ *   0x0F09  People exist  data[0..1] = uint16 LE (0 or 1)
+ *   0x0A15  Heart rate    data[0..3] = float LE
+ *   0x0A16  Distance      data[4..7] = float LE (only if data[0] != 0)
+ *   0x0A04  Num targets   data[0..3] = uint32 LE
+ *
+ * Field mapping in mr60_data_t:
+ *   bpm          <- heart rate (float -> int)
+ *   rpm          <- breath rate (float -> int)
+ *   bpm_wave     <- heart rate raw float
+ *   rpm_wave     <- distance float (repurposed; BHA2 has no wave output)
+ *   status       <- has_target (0 = no person, 1 = person detected)
+ *   bpm_category <- num_targets (truncated to uint8)
+ *   rpm_category <- unused (always 0)
  */
-#define SOF          0x55
-#define T_STATUS     0x05
-#define T_BREATH     0x80
-#define T_HEART      0x81
-#define CMD_CATEGORY 0x04
-#define CMD_RATE     0x05
-#define CMD_WAVE     0x06
 
-/* ── Parser state machine ────────────────────────────────────────────────── */
+#define SOF                  0x01
+#define FRAME_TYPE_BREATH    0x0A14
+#define FRAME_TYPE_HEART     0x0A15
+#define FRAME_TYPE_DISTANCE  0x0A16
+#define FRAME_TYPE_PEOPLE    0x0F09
+#define FRAME_TYPE_TARGETS   0x0A04
+
+/* ── Parser states ───────────────────────────────────────────────────────── */
 typedef enum {
-    S_SOF, S_LENH, S_LENL, S_TYPE, S_CMD, S_DATA, S_CRC
+    S_SOF, S_ID_H, S_ID_L, S_LEN_H, S_LEN_L,
+    S_TYPE_H, S_TYPE_L, S_HDR_CRC, S_DATA, S_DATA_CRC
 } ps_t;
 
 /* ── Module state ────────────────────────────────────────────────────────── */
@@ -47,16 +53,26 @@ static TaskHandle_t      s_task  = NULL;
 static SemaphoreHandle_t s_mutex = NULL;
 static mr60_data_t       s_data  = { .bpm = -1, .rpm = -1, .status = 0 };
 
-static ps_t     s_state   = S_SOF;
-static uint8_t  s_type, s_cmd;
-static uint16_t s_len;          /* remaining payload bytes (TYPE+CMD+DATA) */
-static uint16_t s_total_len;    /* original LEN field value */
+static ps_t     s_state = S_SOF;
+static uint8_t  s_hdr[7];       /* bytes 0..6 collected for header checksum */
+static uint8_t  s_hdr_idx;
+static uint16_t s_frame_type;
+static uint16_t s_len;          /* remaining data bytes to receive */
+static uint16_t s_total_len;
 static uint8_t  s_buf[64];
 static uint16_t s_idx;
-static uint8_t  s_crc_acc;
+static uint8_t  s_crc_acc;      /* running XOR accumulator for data CRC */
+
+/* ── Checksum helpers ────────────────────────────────────────────────────── */
+static uint8_t hdr_checksum(const uint8_t *hdr7)
+{
+    uint8_t c = 0;
+    for (int i = 0; i < 7; i++) c ^= hdr7[i];
+    return ~c;
+}
 
 /* ── Frame dispatch ──────────────────────────────────────────────────────── */
-static void dispatch(uint8_t t, uint8_t cmd, const uint8_t *data, uint16_t dlen)
+static void dispatch(uint16_t frame_type, const uint8_t *data, uint16_t dlen)
 {
     mr60_data_t upd;
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -65,26 +81,57 @@ static void dispatch(uint8_t t, uint8_t cmd, const uint8_t *data, uint16_t dlen)
 
     bool changed = false;
 
-    if (t == T_STATUS && cmd == 0x01 && dlen >= 1) {
-        if (upd.status != data[0]) { upd.status = data[0]; changed = true; }
-    } else if (t == T_BREATH) {
-        if (cmd == CMD_RATE && dlen >= 1 && upd.rpm != (int)data[0]) {
-            upd.rpm = data[0]; changed = true;
-        } else if (cmd == CMD_CATEGORY && dlen >= 1 && upd.rpm_category != data[0]) {
-            upd.rpm_category = data[0]; changed = true;
-        } else if (cmd == CMD_WAVE && dlen >= 4) {
+    switch (frame_type) {
+    case FRAME_TYPE_BREATH:
+        if (dlen >= 4) {
             float v; memcpy(&v, data, 4);
+            if (v != 0.0f && (int)v != upd.rpm) {
+                upd.rpm = (int)v; changed = true;
+            }
+        }
+        break;
+
+    case FRAME_TYPE_HEART:
+        if (dlen >= 4) {
+            float v; memcpy(&v, data, 4);
+            if (v != 0.0f) {
+                if ((int)v != upd.bpm) { upd.bpm = (int)v; changed = true; }
+                if (v != upd.bpm_wave) { upd.bpm_wave = v; changed = true; }
+            }
+        }
+        break;
+
+    case FRAME_TYPE_DISTANCE:
+        if (data != NULL && data[0] != 0 && dlen >= 8) {
+            float v; memcpy(&v, data + 4, 4);
             if (v != upd.rpm_wave) { upd.rpm_wave = v; changed = true; }
         }
-    } else if (t == T_HEART) {
-        if (cmd == CMD_RATE && dlen >= 1 && upd.bpm != (int)data[0]) {
-            upd.bpm = data[0]; changed = true;
-        } else if (cmd == CMD_CATEGORY && dlen >= 1 && upd.bpm_category != data[0]) {
-            upd.bpm_category = data[0]; changed = true;
-        } else if (cmd == CMD_WAVE && dlen >= 4) {
-            float v; memcpy(&v, data, 4);
-            if (v != upd.bpm_wave) { upd.bpm_wave = v; changed = true; }
+        break;
+
+    case FRAME_TYPE_PEOPLE:
+        if (dlen >= 2) {
+            uint16_t ht = (uint16_t)((data[1] << 8) | data[0]);
+            if (upd.status != (uint8_t)ht) {
+                upd.status = (uint8_t)ht; changed = true;
+                if (ht == 0) {
+                    upd.bpm = 0; upd.rpm = 0;
+                    upd.bpm_wave = 0.0f; upd.rpm_wave = 0.0f;
+                }
+            }
         }
+        break;
+
+    case FRAME_TYPE_TARGETS:
+        if (dlen >= 4) {
+            uint32_t n; memcpy(&n, data, 4);
+            if (upd.bpm_category != (uint8_t)n) {
+                upd.bpm_category = (uint8_t)n; changed = true;
+            }
+        }
+        break;
+
+    default:
+        break;
     }
 
     xSemaphoreTake(s_mutex, portMAX_DELAY);
@@ -99,49 +146,76 @@ static void parse_byte(uint8_t b)
 {
     switch (s_state) {
     case S_SOF:
-        if (b == SOF) s_state = S_LENH;
+        if (b == SOF) { s_hdr[0] = b; s_hdr_idx = 1; s_state = S_ID_H; }
         break;
-    case S_LENH:
+    case S_ID_H:
+        s_hdr[s_hdr_idx++] = b;
+        s_state = S_ID_L;
+        break;
+    case S_ID_L:
+        s_hdr[s_hdr_idx++] = b;
+        s_state = S_LEN_H;
+        break;
+    case S_LEN_H:
+        s_hdr[s_hdr_idx++] = b;
         s_total_len = (uint16_t)b << 8;
-        s_state = S_LENL;
+        s_state = S_LEN_L;
         break;
-    case S_LENL:
+    case S_LEN_L:
+        s_hdr[s_hdr_idx++] = b;
         s_total_len |= b;
-        /* LEN includes TYPE (1) + CMD (1) + DATA (n); must be >= 2 */
-        if (s_total_len < 2 || s_total_len > 62) {
+        s_state = S_TYPE_H;
+        break;
+    case S_TYPE_H:
+        s_hdr[s_hdr_idx++] = b;
+        s_frame_type = (uint16_t)b << 8;
+        s_state = S_TYPE_L;
+        break;
+    case S_TYPE_L:
+        s_hdr[s_hdr_idx++] = b;
+        s_frame_type |= b;
+        if (s_frame_type != FRAME_TYPE_BREATH   &&
+            s_frame_type != FRAME_TYPE_HEART     &&
+            s_frame_type != FRAME_TYPE_DISTANCE  &&
+            s_frame_type != FRAME_TYPE_PEOPLE    &&
+            s_frame_type != FRAME_TYPE_TARGETS) {
+            ESP_LOGD(TAG, "unknown frame type 0x%04x", s_frame_type);
+            s_state = S_SOF;
+            xSemaphoreTake(s_mutex, portMAX_DELAY); s_data.frames_err++; xSemaphoreGive(s_mutex);
+        } else {
+            s_state = S_HDR_CRC;
+        }
+        break;
+    case S_HDR_CRC:
+        if (b != hdr_checksum(s_hdr)) {
+            ESP_LOGE(TAG, "HDR_CRC error: got 0x%02x exp 0x%02x", b, hdr_checksum(s_hdr));
+            s_state = S_SOF;
+            xSemaphoreTake(s_mutex, portMAX_DELAY); s_data.frames_err++; xSemaphoreGive(s_mutex);
+        } else if (s_total_len == 0) {
+            dispatch(s_frame_type, NULL, 0);
+            s_state = S_SOF;
+        } else if (s_total_len > sizeof(s_buf)) {
+            ESP_LOGE(TAG, "frame too long: %u", s_total_len);
             s_state = S_SOF;
             xSemaphoreTake(s_mutex, portMAX_DELAY); s_data.frames_err++; xSemaphoreGive(s_mutex);
         } else {
             s_len = s_total_len;
             s_idx = 0;
             s_crc_acc = 0;
-            s_state = S_TYPE;
+            s_state = S_DATA;
         }
-        break;
-    case S_TYPE:
-        s_type = b;
-        s_crc_acc ^= b;
-        s_len--;
-        s_state = S_CMD;
-        break;
-    case S_CMD:
-        s_cmd = b;
-        s_crc_acc ^= b;
-        s_len--;
-        s_state = (s_len > 0) ? S_DATA : S_CRC;
         break;
     case S_DATA:
         s_buf[s_idx++] = b;
         s_crc_acc ^= b;
-        s_len--;
-        if (s_len == 0) s_state = S_CRC;
+        if (--s_len == 0) s_state = S_DATA_CRC;
         break;
-    case S_CRC:
+    case S_DATA_CRC:
         s_state = S_SOF;
-        if (b == s_crc_acc) {
-            uint16_t dlen = (s_idx > 0) ? s_idx : 0;
-            dispatch(s_type, s_cmd, s_buf, dlen);
+        if (b == (uint8_t)(~s_crc_acc)) {
+            dispatch(s_frame_type, s_buf, s_idx);
         } else {
+            ESP_LOGE(TAG, "DATA_CRC error: got 0x%02x exp 0x%02x", b, (uint8_t)(~s_crc_acc));
             xSemaphoreTake(s_mutex, portMAX_DELAY); s_data.frames_err++; xSemaphoreGive(s_mutex);
         }
         break;
@@ -199,8 +273,7 @@ void mr60bha2_get(mr60_data_t *out)
 bool mr60bha2_ready(void)
 {
     xSemaphoreTake(s_mutex, portMAX_DELAY);
-    bool r = (s_data.status == MR60_STATUS_MEAS &&
-              s_data.bpm > 0 && s_data.rpm > 0);
+    bool r = (s_data.status != 0 && s_data.bpm > 0 && s_data.rpm > 0);
     xSemaphoreGive(s_mutex);
     return r;
 }

@@ -122,15 +122,15 @@ static void on_radar_frame(const mr60_data_t *d) {
 /* ── MQTT-Kommando-Handler (Befehle vom Linux-Host) ─────────────────────── */
 static void on_mqtt_cmd(const char *cmd, const char *payload, int len) {
     if (strcmp(cmd, "permit_join") == 0) {
-        /* Payload: Anzahl Sekunden als ASCII-Dezimalzahl, z.B. "180" oder "0" */
         char buf[8] = {0};
         int n = len < (int)(sizeof(buf) - 1) ? len : (int)(sizeof(buf) - 1);
         memcpy(buf, payload, n);
         uint8_t secs = (uint8_t)atoi(buf);
-        ESP_LOGI(TAG, "cmd permit_join %u s", secs);
+        ha_mqtt_logf(TAG, "cmd permit_join %u s -> zb_gateway_permit_join", secs);
         zb_gateway_permit_join(secs);
+        ha_mqtt_logf(TAG, "zb_gateway_permit_join(%u) returned", secs);
     } else {
-        ESP_LOGW(TAG, "Unbekanntes Kommando: %s", cmd);
+        ha_mqtt_logf(TAG, "Unbekanntes Kommando: %s", cmd);
     }
 }
 
