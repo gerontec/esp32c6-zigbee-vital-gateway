@@ -9,6 +9,7 @@
 /* MR60BHA2 – 60 GHz mmWave Breathing & Heartbeat Pro */
 #include "mr60bha2.h"
 #include "matter_endpoint.h"
+#include "ble_log.h"
 
 #define TAG "main"
 
@@ -38,6 +39,9 @@ void app_main(void)
 
     ESP_ERROR_CHECK(esp_netif_init());
     ESP_ERROR_CHECK(esp_event_loop_create_default());
+
+    /* BLE-Log-Service registrieren (vor Matter-Start!) */
+    ESP_ERROR_CHECK(ble_log_init());
 
     /* Matter-Endpoints registrieren und Stack starten */
     ESP_ERROR_CHECK(matter_endpoints_init());
