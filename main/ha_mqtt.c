@@ -1,83 +1,67 @@
+/*
+ * ha_mqtt.c  –  UART-Serial-Implementierung (ersetzt MQTT)
+ *
+ * C6 GPIO16 (TX) → S3 GPIO44 (RX)
+ * C6 GPIO17 (RX) ← S3 GPIO43 (TX)
+ * GND ─────────── GND
+ *
+ * Protokoll: JSON-Lines (ein JSON-Objekt pro Zeile, \n-terminiert)
+ *   C6 → S3: {"t":"boot"}
+ *             {"t":"vitals","p":{...}}
+ *             {"t":"zigbee","addr":<uint>,"sub":"<name>","p":{...}}
+ *             {"t":"permit_join","p":{"open":true/false,"seconds":<n>}}
+ *   S3 → C6: {"cmd":"permit_join","sec":<n>}
+ */
 #include <stdio.h>
 #include <string.h>
 #include <stdlib.h>
 #include <stdarg.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "driver/uart.h"
 #include "esp_log.h"
-#include "esp_mac.h"
-#include "mqtt_client.h"
 #include "ha_mqtt.h"
 
-#define TAG "mqtt_bridge"
+#define TAG         "uart_serial"
+#define UART_PORT   UART_NUM_0
+#define UART_TX_PIN 16
+#define UART_RX_PIN 17
+#define UART_BAUD   115200
+#define RX_BUF_SIZE 256
 
-/* Basis-Topic: gw/<MAC4> */
-static char s_base[24];
-static esp_mqtt_client_handle_t s_client = NULL;
-static bool s_connected = false;
 static mqtt_cmd_cb_t s_cmd_cb = NULL;
 
-/* ── Interne Hilfsfunktion: Topic publizieren ───────────────────────────── */
-static void pub(const char *topic, const char *payload, int qos, int retain) {
-    if (!s_connected) return;
-    esp_mqtt_client_publish(s_client, topic, payload,
-                            strlen(payload), qos, retain);
+/* ── Hilfsfunktion: eine JSON-Zeile über UART senden ───────────────────── */
+static void emit(const char *line) {
+    uart_write_bytes(UART_PORT, line, strlen(line));
+    uart_write_bytes(UART_PORT, "\n", 1);
 }
 
-/* ── Kommando-Topic abonnieren ──────────────────────────────────────────── */
-static void subscribe_cmds(void) {
-    char topic[64];
-    snprintf(topic, sizeof(topic), "%s/cmd/+", s_base);
-    esp_mqtt_client_subscribe(s_client, topic, 1);
-    ESP_LOGI(TAG, "Subscribed: %s", topic);
-}
+/* ── RX-Task: Kommandos vom S3 empfangen ────────────────────────────────── */
+static void rx_task(void *arg) {
+    uint8_t *buf = malloc(RX_BUF_SIZE);
+    configASSERT(buf);
+    int pos = 0;
 
-/* ── MQTT-Ereignishandler ───────────────────────────────────────────────── */
-static void mqtt_event_handler(void *arg,
-                                esp_event_base_t base,
-                                int32_t event_id,
-                                void *event_data) {
-    esp_mqtt_event_handle_t ev = event_data;
+    while (1) {
+        uint8_t c;
+        int n = uart_read_bytes(UART_PORT, &c, 1, pdMS_TO_TICKS(100));
+        if (n <= 0) continue;
 
-    switch (ev->event_id) {
-    case MQTT_EVENT_CONNECTED:
-        s_connected = true;
-        ESP_LOGI(TAG, "MQTT connected → %s", s_base);
-
-        /* Verfügbarkeit melden */
-        char avail[64];
-        snprintf(avail, sizeof(avail), "%s/status", s_base);
-        pub(avail, "online", 1, 1);
-
-        /* Kommando-Topics abonnieren */
-        subscribe_cmds();
-        break;
-
-    case MQTT_EVENT_DISCONNECTED:
-        s_connected = false;
-        ESP_LOGW(TAG, "MQTT disconnected");
-        break;
-
-    case MQTT_EVENT_DATA: {
-        if (!s_cmd_cb) break;
-
-        /* Topic: gw/<base>/cmd/<cmd_name> */
-        char topic[128];
-        int tlen = ev->topic_len < (int)(sizeof(topic) - 1)
-                   ? ev->topic_len : (int)(sizeof(topic) - 1);
-        memcpy(topic, ev->topic, tlen);
-        topic[tlen] = '\0';
-
-        /* Prüfen ob cmd-Topic */
-        char cmd_prefix[64];
-        snprintf(cmd_prefix, sizeof(cmd_prefix), "%s/cmd/", s_base);
-        if (strncmp(topic, cmd_prefix, strlen(cmd_prefix)) == 0) {
-            const char *cmd = topic + strlen(cmd_prefix);
-            s_cmd_cb(cmd, ev->data, ev->data_len);
+        if (c == '\n' || pos >= RX_BUF_SIZE - 1) {
+            buf[pos] = '\0';
+            /* Nur verarbeiten wenn Kommando und Callback registriert */
+            if (pos > 2 && s_cmd_cb && strstr((char *)buf, "permit_join")) {
+                /* Format: {"cmd":"permit_join","sec":180} */
+                char *p = strstr((char *)buf, "\"sec\":");
+                char secs_str[8] = "180";
+                if (p) snprintf(secs_str, sizeof(secs_str), "%d", atoi(p + 6));
+                s_cmd_cb("permit_join", secs_str, strlen(secs_str));
+            }
+            pos = 0;
+        } else {
+            buf[pos++] = c;
         }
-        break;
-    }
-
-    default:
-        break;
     }
 }
 
@@ -86,76 +70,73 @@ static void mqtt_event_handler(void *arg,
 esp_err_t ha_mqtt_init(const char *broker_uri,
                        const char *username,
                        const char *password) {
-    uint8_t mac[6];
-    esp_read_mac(mac, ESP_MAC_WIFI_STA);
-    snprintf(s_base, sizeof(s_base), "gw/%02x%02x%02x%02x",
-             mac[2], mac[3], mac[4], mac[5]);
+    (void)broker_uri; (void)username; (void)password;
 
-    char lwt_topic[64];
-    snprintf(lwt_topic, sizeof(lwt_topic), "%s/status", s_base);
-
-    esp_mqtt_client_config_t cfg = {
-        .broker.address.uri                  = broker_uri,
-        .credentials.username                = username,
-        .credentials.authentication.password = password,
-        .session.last_will.topic             = lwt_topic,
-        .session.last_will.msg               = "offline",
-        .session.last_will.qos               = 1,
-        .session.last_will.retain            = true,
+    uart_config_t cfg = {
+        .baud_rate  = UART_BAUD,
+        .data_bits  = UART_DATA_8_BITS,
+        .parity     = UART_PARITY_DISABLE,
+        .stop_bits  = UART_STOP_BITS_1,
+        .flow_ctrl  = UART_HW_FLOWCTRL_DISABLE,
     };
+    ESP_ERROR_CHECK(uart_param_config(UART_PORT, &cfg));
+    ESP_ERROR_CHECK(uart_set_pin(UART_PORT, UART_TX_PIN, UART_RX_PIN,
+                                 UART_PIN_NO_CHANGE, UART_PIN_NO_CHANGE));
+    ESP_ERROR_CHECK(uart_driver_install(UART_PORT,
+                                        RX_BUF_SIZE * 2, 0, 0, NULL, 0));
 
-    s_client = esp_mqtt_client_init(&cfg);
-    esp_mqtt_client_register_event(s_client, ESP_EVENT_ANY_ID,
-                                   mqtt_event_handler, NULL);
-    return esp_mqtt_client_start(s_client);
+    xTaskCreate(rx_task, "uart_rx", 2048, NULL, 4, NULL);
+
+    emit("{\"t\":\"boot\"}");
+    ESP_LOGI(TAG, "UART bereit: TX=GPIO%d RX=GPIO%d %d Baud",
+             UART_TX_PIN, UART_RX_PIN, UART_BAUD);
+    return ESP_OK;
 }
 
 void ha_mqtt_set_cmd_cb(mqtt_cmd_cb_t cb) {
     s_cmd_cb = cb;
 }
 
-/* Vitaldaten: rohe Integer, keine Strings für Kategorien */
 void ha_mqtt_publish_vitals(const mr60_data_t *d) {
-    char topic[64], payload[128];
-    snprintf(topic, sizeof(topic), "%s/mr60bha1", s_base);
-    snprintf(payload, sizeof(payload),
-        "{\"bpm\":%d,\"rpm\":%d,"
+    char line[192];
+    snprintf(line, sizeof(line),
+        "{\"t\":\"vitals\",\"p\":{"
+        "\"bpm\":%d,\"rpm\":%d,"
         "\"bpm_cat\":%u,\"rpm_cat\":%u,"
         "\"status\":%u,"
-        "\"bpm_wave\":%.3f,\"rpm_wave\":%.3f}",
+        "\"bpm_wave\":%.3f,\"rpm_wave\":%.3f}}",
         d->bpm, d->rpm,
         (unsigned)d->bpm_category, (unsigned)d->rpm_category,
         (unsigned)d->status,
         d->bpm_wave, d->rpm_wave);
-    pub(topic, payload, 0, 0);
+    emit(line);
 }
 
-/* Zigbee-Daten: pass-through, payload kommt fertig von zb_gateway */
+/* payload kommt als fertiges JSON-Objekt z.B. {"raw":2150} */
 void ha_mqtt_publish_zigbee(uint16_t addr,
                              const char *subtopic,
                              const char *payload) {
-    char topic[64];
-    snprintf(topic, sizeof(topic), "%s/zigbee/0x%04x/%s",
-             s_base, addr, subtopic);
-    pub(topic, payload, 0, 0);
+    char line[160];
+    snprintf(line, sizeof(line),
+        "{\"t\":\"zigbee\",\"addr\":%u,\"sub\":\"%s\",\"p\":%s}",
+        (unsigned)addr, subtopic, payload);
+    emit(line);
 }
 
-/* Permit-Join-Status */
 void ha_mqtt_publish_permit_join(bool open, uint8_t seconds) {
-    char topic[64], payload[32];
-    snprintf(topic,   sizeof(topic),   "%s/permit_join", s_base);
-    snprintf(payload, sizeof(payload),
-             "{\"open\":%s,\"seconds\":%u}",
-             open ? "true" : "false", (unsigned)seconds);
-    pub(topic, payload, 1, 0);
+    char line[80];
+    snprintf(line, sizeof(line),
+        "{\"t\":\"permit_join\",\"p\":{\"open\":%s,\"seconds\":%u}}",
+        open ? "true" : "false", (unsigned)seconds);
+    emit(line);
 }
 
 bool ha_mqtt_connected(void) {
-    return s_connected;
+    return true;  /* UART ist immer "verbunden" */
 }
 
 const char *ha_mqtt_base_topic(void) {
-    return s_base;
+    return "c6/uart";
 }
 
 void ha_mqtt_logf(const char *tag, const char *fmt, ...) {
@@ -164,19 +145,5 @@ void ha_mqtt_logf(const char *tag, const char *fmt, ...) {
     va_start(ap, fmt);
     vsnprintf(msg, sizeof(msg), fmt, ap);
     va_end(ap);
-
-    /* JSON-Sonderzeichen im msg escapen (nur " und \) */
-    char escaped[256];
-    int j = 0;
-    for (int i = 0; msg[i] && j < (int)sizeof(escaped) - 2; i++) {
-        if (msg[i] == '"' || msg[i] == '\\') escaped[j++] = '\\';
-        escaped[j++] = msg[i];
-    }
-    escaped[j] = '\0';
-
-    char topic[64], payload[320];
-    snprintf(topic,   sizeof(topic),   "%s/debug", s_base);
-    snprintf(payload, sizeof(payload), "{\"tag\":\"%s\",\"msg\":\"%s\"}", tag, escaped);
-    pub(topic, payload, 0, 0);
     ESP_LOGI(tag, "%s", msg);
 }
