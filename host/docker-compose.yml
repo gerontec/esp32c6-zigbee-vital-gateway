@@ -1,21 +1,63 @@
-# Mosquitto läuft bereits als systemd-Service auf Port 1883.
-# Nur der Gateway-Service wird hier als Container gestartet.
+# ESP32-C6 Thread RCP + Matter Border Router Stack
 
 services:
+
+  # ── OpenThread Border Router Agent ────────────────────────────────────────
+  # Verbindet sich mit ESP32-C6 RCP über /dev/ttyACM0 (spinel+hdlc+uart)
+  # REST API auf Port 8081, Web-UI auf Port 8090
+  otbr:
+    image: openthread/otbr:latest
+    container_name: otbr
+    restart: always
+    network_mode: host
+    devices:
+      - /dev/ttyACM0:/dev/ttyACM0
+    environment:
+      OTBR_AGENT_OPTS: "-I wpan0 -B eth0 spinel+hdlc+uart:///dev/ttyACM0?uart-baudrate=460800"
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_ADMIN
+    volumes:
+      - otbr-data:/var/lib/otbr
+
+  # ── Python Matter Server ───────────────────────────────────────────────────
+  # Matter Controller: commissioniert Geräte, empfängt Attribute Reports
+  # WebSocket API auf Port 5580
+  matter-server:
+    image: ghcr.io/home-assistant-libs/python-matter-server:stable
+    container_name: matter-server
+    restart: always
+    network_mode: host
+    volumes:
+      - matter-data:/data
+    depends_on:
+      - otbr
+
+  # ── Gateway Service ────────────────────────────────────────────────────────
+  # Liest von python-matter-server WebSocket, speichert in MariaDB, Web-UI
   gateway:
     build: .
     image: esp32-gw-gateway
     container_name: esp32gw-service
     restart: always
-    network_mode: host          # direkt auf localhost:1883 zugreifen
+    network_mode: host
     environment:
-      MQTT_HOST: "127.0.0.1"
-      MQTT_PORT: "1883"
-      WEB_PORT: "8080"
-      DEVICES_FILE: /data/devices.json
-      LOG_LEVEL: INFO
+      MATTER_WS_URL:  "ws://localhost:5580/ws"
+      OTBR_REST_URL:  "http://localhost:8081"
+      WEB_PORT:       "8082"
+      DEVICES_FILE:   /data/devices.json
+      LOG_LEVEL:      INFO
+      DB_HOST:        "192.168.178.218"
+      DB_USER:        "gh"
+      DB_PASS:        "a12345"
+      DB_NAME:        "wagodb"
     volumes:
       - gateway-data:/data
+    depends_on:
+      - matter-server
 
 volumes:
+  otbr-data:
+  matter-data:
   gateway-data:

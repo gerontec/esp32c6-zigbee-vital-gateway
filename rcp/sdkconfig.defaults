@@ -1,0 +1,37 @@
+# ESP32-C6 – Thread Radio Co-Processor (RCP)
+# Spinel-Protokoll über USB-Serial-JTAG (/dev/ttyACM0) zum Host
+# otbr-agent auf dem Host spricht hierüber mit dem 802.15.4 Radio
+
+# ── OpenThread RCP ────────────────────────────────────────────────────────────
+CONFIG_OPENTHREAD_ENABLED=y
+CONFIG_OPENTHREAD_RADIO=y
+CONFIG_OPENTHREAD_DIAG=n
+CONFIG_OPENTHREAD_COMMISSIONER=n
+CONFIG_OPENTHREAD_JOINER=n
+CONFIG_OPENTHREAD_BORDER_ROUTER=n
+CONFIG_OPENTHREAD_CLI=n
+CONFIG_OPENTHREAD_SRP_CLIENT=n
+CONFIG_OPENTHREAD_DNS_CLIENT=n
+
+# ── Spinel Transport: UART0 → USB-Serial-JTAG (/dev/ttyACM0) ─────────────────
+# USB-Serial-JTAG trägt das Spinel-Protokoll, KEIN Console-Output
+CONFIG_OPENTHREAD_RCP_UART=y
+CONFIG_ESP_CONSOLE_NONE=y
+
+# ── Wireless Coexistence deaktivieren ─────────────────────────────────────────
+CONFIG_ESP_COEX_SW_COEXIST_ENABLE=n
+
+# ── Größenoptimierung (RCP braucht wenig Flash) ───────────────────────────────
+CONFIG_COMPILER_OPTIMIZATION_SIZE=y
+CONFIG_COMPILER_OPTIMIZATION_ASSERTIONS_SILENT=y
+CONFIG_COMPILER_OPTIMIZATION_CHECKS_SILENT=y
+CONFIG_COMPILER_SAVE_RESTORE_LIBCALLS=y
+CONFIG_ESP_ERR_TO_NAME_LOOKUP=n
+CONFIG_ESP_SYSTEM_PANIC_SILENT_REBOOT=y
+CONFIG_LOG_DEFAULT_LEVEL_NONE=y
+CONFIG_NEWLIB_NANO_FORMAT=y
+CONFIG_OPENTHREAD_LOG_LEVEL_DYNAMIC=n
+CONFIG_OPENTHREAD_LOG_LEVEL_NONE=y
+
+# ── Flash ─────────────────────────────────────────────────────────────────────
+CONFIG_ESPTOOLPY_FLASHSIZE_4MB=y
