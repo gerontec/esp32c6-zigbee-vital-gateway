@@ -5,6 +5,10 @@
 #include "esp_matter_cluster.h"
 #include "esp_matter_endpoint.h"
 
+/* OpenThread platform config (must be set before esp_matter::start) */
+#include "esp_openthread_types.h"
+#include "OpenthreadLauncher.h"
+
 /* CHIP generated cluster/attribute IDs */
 #include "app-common/zap-generated/ids/Clusters.h"
 #include "app-common/zap-generated/ids/Attributes.h"
@@ -45,6 +49,19 @@ extern "C" esp_err_t matter_endpoints_init(void)
     /* Custom Vital-Cluster an ep_bpm und ep_rpm hängen */
     esp_err_t err = vital_clusters_create(ep_bpm, ep_rpm);
     if (err != ESP_OK) return err;
+
+    /* OpenThread platform config – must be set before esp_matter::start()
+     * CONFIG_OPENTHREAD_RADIO_NATIVE=y → native 802.15.4 radio on ESP32-C6 */
+    esp_openthread_platform_config_t ot_config = {
+        .radio_config = { .radio_mode = RADIO_MODE_NATIVE },
+        .host_config  = { .host_connection_mode = HOST_CONNECTION_MODE_NONE },
+        .port_config  = {
+            .storage_partition_name = "nvs",
+            .netif_queue_size       = 10,
+            .task_queue_size        = 10,
+        },
+    };
+    set_openthread_platform_config(&ot_config);
 
     return esp_matter::start(NULL);
 }

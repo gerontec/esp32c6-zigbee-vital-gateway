@@ -12,8 +12,15 @@ services:
     network_mode: host
     devices:
       - /dev/ttyACM0:/dev/ttyACM0
+      - /dev/net/tun:/dev/net/tun
     environment:
-      OTBR_AGENT_OPTS: "-I wpan0 -B eth0 spinel+hdlc+uart:///dev/ttyACM0?uart-baudrate=460800"
+      RADIO_URL: "spinel+hdlc+uart:///dev/ttyACM0?uart-baudrate=460800"
+      BACKBONE_INTERFACE: "enp0s31f6"
+      # otbr-web: accessible from Android/NXP Matter Tool on LAN
+      HTTP_HOST: "0.0.0.0"
+      HTTP_PORT: "8090"
+      # REST API accessible from gateway service
+      REST_HOST: "0.0.0.0"
     cap_add:
       - NET_ADMIN
       - NET_RAW
