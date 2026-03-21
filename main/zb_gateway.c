@@ -3,13 +3,18 @@
 #include "freertos/task.h"
 #include "freertos/semphr.h"
 #include "esp_log.h"
+#include "esp_system.h"
+#include "esp_partition.h"
 #include "nvs_flash.h"
+#include "nvs.h"
 #include "ha/esp_zigbee_ha_standard.h"
 #include "zb_gateway.h"
 #include "ha_mqtt.h"
 
-/* Kanal 11-26, alle Kanäle */
-#define ESP_ZB_PRIMARY_CHANNEL_MASK (0x07FFF800U)
+#define ZB_DEFAULT_CHANNEL  20
+#define ZB_FALLBACK_CHANNEL 25
+#define ZB_NVS_NAMESPACE    "zb_gw"
+#define ZB_NVS_KEY_CHANNEL  "channel"
 
 #define TAG "zb_gw"
 #define ZB_ENDPOINT 1
@@ -147,8 +152,10 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
         break;
 
     case ESP_ZB_BDB_SIGNAL_STEERING:
-        if (err == ESP_OK)
-            ESP_LOGI(TAG, "Zigbee bereit – Geräte können beitreten");
+        if (err == ESP_OK) {
+            ESP_LOGI(TAG, "Zigbee bereit – Permit Join geschlossen");
+            esp_zb_bdb_open_network(0);   /* sofort schließen */
+        }
         break;
 
     case ESP_ZB_ZDO_SIGNAL_DEVICE_ANNCE: {
@@ -195,8 +202,25 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
     }
 }
 
+/* ── Gespeicherten Kanal aus NVS lesen (Default: ZB_DEFAULT_CHANNEL) ─────── */
+static uint8_t load_channel(void) {
+    uint8_t ch = ZB_DEFAULT_CHANNEL;
+    nvs_handle_t h;
+    if (nvs_open(ZB_NVS_NAMESPACE, NVS_READONLY, &h) == ESP_OK) {
+        nvs_get_u8(h, ZB_NVS_KEY_CHANNEL, &ch);
+        nvs_close(h);
+    }
+    if (ch < 11 || ch > 26) ch = ZB_DEFAULT_CHANNEL;
+    return ch;
+}
+
 /* ── Zigbee-Haupttask ───────────────────────────────────────────────────── */
 static void zb_task(void *arg) {
+    uint8_t ch = load_channel();
+    uint8_t fallback = (ch == ZB_FALLBACK_CHANNEL) ? ZB_DEFAULT_CHANNEL
+                                                    : ZB_FALLBACK_CHANNEL;
+    ESP_LOGI(TAG, "Zigbee primär Kanal %d, Fallback Kanal %d", ch, fallback);
+
     esp_zb_cfg_t cfg = {
         .esp_zb_role        = ESP_ZB_DEVICE_TYPE_COORDINATOR,
         .install_code_policy = false,
@@ -209,7 +233,8 @@ static void zb_task(void *arg) {
     esp_zb_device_register(ep);
 
     esp_zb_core_action_handler_register(zb_action_handler);
-    esp_zb_set_primary_network_channel_set(ESP_ZB_PRIMARY_CHANNEL_MASK);
+    esp_zb_set_primary_network_channel_set(1U << ch);
+    esp_zb_set_secondary_network_channel_set(1U << fallback);
 
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_main_loop_iteration();
@@ -253,6 +278,38 @@ void zb_gateway_devices_json(char *buf, size_t len) {
     snprintf(buf + pos, len - pos, "]");
 }
 
+void zb_gateway_set_channel(uint8_t ch) {
+    if (ch < 11 || ch > 26) {
+        ESP_LOGE(TAG, "Ungültiger Kanal: %d (erlaubt: 11-26)", ch);
+        return;
+    }
+
+    /* Kanal in eigenem NVS-Namespace speichern */
+    nvs_handle_t h;
+    if (nvs_open(ZB_NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, ZB_NVS_KEY_CHANNEL, ch);
+        nvs_commit(h);
+        nvs_close(h);
+        ESP_LOGI(TAG, "Kanal %d in NVS gespeichert", ch);
+    } else {
+        ESP_LOGE(TAG, "NVS-Schreibfehler");
+        return;
+    }
+
+    /* Zigbee FAT-Storage löschen → nächster Boot bildet neues Netz */
+    const esp_partition_t *part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "zb_storage");
+    if (part) {
+        esp_err_t err = esp_partition_erase_range(part, 0, part->size);
+        ESP_LOGI(TAG, "zb_storage gelöscht: %s", esp_err_to_name(err));
+    } else {
+        ESP_LOGW(TAG, "Partition zb_storage nicht gefunden");
+    }
+
+    ESP_LOGI(TAG, "Neustart für Kanalwechsel auf %d...", ch);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    esp_restart();
+}
 
 void zb_gateway_list_devices(void) {
     xSemaphoreTake(s_dev_mutex, portMAX_DELAY);

@@ -11,7 +11,7 @@ CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ_160=y
 CONFIG_FREERTOS_HZ=1000
 CONFIG_FREERTOS_TIMER_TASK_STACK_DEPTH=4096
 
-# ── Console → USB_SERIAL_JTAG (UART0 bleibt frei für S3-Verbindung) ──────────
+# ── Console: USB Serial JTAG (/dev/ttyACM0) – Logs per vprintf stumm ────────
 CONFIG_ESP_CONSOLE_USB_SERIAL_JTAG=y
 
 # ── Flash / Partition Table ───────────────────────────────────────────────────

@@ -3,16 +3,12 @@
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
+#include "esp_timer.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
-#include "mr60bha2.h"
+#include "esp_zigbee_core.h"
 #include "ha_mqtt.h"
 #include "zb_gateway.h"
-
-/* MR60BHA2 UART-Pins (ESP32-C6 DevKit) */
-#define MR60_UART        UART_NUM_1
-#define MR60_TX_PIN      4
-#define MR60_RX_PIN      5
 
 /* Permit-Join-Taste (Boot-Taste = GPIO9) */
 #define BTN_PERMIT_JOIN  9
@@ -20,24 +16,37 @@
 
 #define TAG "main"
 
-/* ── MR60BHA2-Callback → UART ───────────────────────────────────────────── */
-static void on_radar_frame(const mr60_data_t *d) {
-    ha_mqtt_publish_vitals(d);
-}
-
-/* ── UART-Kommando-Handler (Befehle vom S3) ─────────────────────────────── */
+/* ── Kommando-Handler: Befehle vom Pi via UART1 ─────────────────────────── */
 static void on_uart_cmd(const char *cmd, const char *payload, int len) {
+    char buf[8] = {0};
+    int n = len < (int)(sizeof(buf) - 1) ? len : (int)(sizeof(buf) - 1);
+    memcpy(buf, payload, n);
+
     if (strcmp(cmd, "permit_join") == 0) {
-        char buf[8] = {0};
-        int n = len < (int)(sizeof(buf) - 1) ? len : (int)(sizeof(buf) - 1);
-        memcpy(buf, payload, n);
         uint8_t secs = (uint8_t)atoi(buf);
-        ESP_LOGI(TAG, "permit_join %u s (via UART vom S3)", secs);
+        ESP_LOGI(TAG, "permit_join %u s", secs);
         zb_gateway_permit_join(secs);
+    } else if (strcmp(cmd, "set_channel") == 0) {
+        uint8_t ch = (uint8_t)atoi(buf);
+        ESP_LOGI(TAG, "set_channel %u", ch);
+        zb_gateway_set_channel(ch);
     }
 }
 
-/* ── Permit-Join-Taste (Notfall ohne S3) ────────────────────────────────── */
+/* ── Heartbeat-Task: alle 30 s Status-JSON senden ───────────────────────── */
+#define HEARTBEAT_INTERVAL_MS 10000
+
+static void heartbeat_task(void *arg) {
+    while (1) {
+        vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_INTERVAL_MS));
+        uint32_t uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+        uint8_t  ch       = esp_zb_get_current_channel();
+        uint16_t pan      = esp_zb_get_pan_id();
+        ha_mqtt_publish_heartbeat(uptime_s, ch, pan);
+    }
+}
+
+/* ── Permit-Join-Taste ──────────────────────────────────────────────────── */
 static void btn_task(void *arg) {
     gpio_set_direction(BTN_PERMIT_JOIN, GPIO_MODE_INPUT);
     gpio_set_pull_mode(BTN_PERMIT_JOIN, GPIO_PULLUP_ONLY);
@@ -56,9 +65,10 @@ static void btn_task(void *arg) {
 
 /* ── app_main ───────────────────────────────────────────────────────────── */
 void app_main(void) {
-    ESP_LOGI(TAG, "=== ESP32-C6  Zigbee + Radar → UART Bridge ===");
+    ESP_LOGI(TAG, "=== ESP32-C6 Zigbee Gateway ===");
+    ESP_LOGI(TAG, "  JSON : UART1 TX=GPIO16 RX=GPIO17 → Pi /dev/ttyUSBx");
+    ESP_LOGI(TAG, "  Logs : UART0 / USB-CDC → /dev/ttyACM0");
 
-    /* NVS (wird von Zigbee benötigt) */
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
         ret == ESP_ERR_NVS_NEW_VERSION_FOUND) {
@@ -67,25 +77,11 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
-    /* 1. UART-Serial statt MQTT */
     ha_mqtt_set_cmd_cb(on_uart_cmd);
     ESP_ERROR_CHECK(ha_mqtt_init(NULL, NULL, NULL));
 
-    /* 2. MR60BHA2 Radar (60 GHz, UART1, TX=GPIO4 RX=GPIO5) */
-    ESP_ERROR_CHECK(mr60bha2_init(MR60_UART, MR60_TX_PIN, MR60_RX_PIN,
-                                  on_radar_frame));
-
-    /* 3. Zigbee-Koordinator */
     zb_gateway_start();
 
-    /* 4. Permit-Join-Taste als Fallback */
-    xTaskCreate(btn_task, "btn", 2048, NULL, 3, NULL);
-
-    ESP_LOGI(TAG,
-        "Gestartet.\n"
-        "  JSON-Output : UART0 TX=GPIO16\n"
-        "  Radar       : UART1 TX=GPIO4 RX=GPIO5\n"
-        "  Zigbee      : Koordinator aktiv\n"
-        "  Permit Join : Boot-Taste (GPIO%d) ODER cmd vom S3",
-        BTN_PERMIT_JOIN);
+    xTaskCreate(btn_task,       "btn",       2048, NULL, 3, NULL);
+    xTaskCreate(heartbeat_task, "heartbeat", 2048, NULL, 2, NULL);
 }
