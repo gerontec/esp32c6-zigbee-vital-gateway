@@ -1,0 +1,156 @@
+/*
+ * zb_device.c – Zigbee Router (verbindet sich mit Coordinator)
+ *
+ * Cluster: On/Off (server-side – steuerbar vom Coordinator)
+ * Meldet Attributwechsel via ha_mqtt_publish_attr()
+ */
+#include <string.h>
+#include "freertos/FreeRTOS.h"
+#include "freertos/task.h"
+#include "esp_log.h"
+#include "esp_zigbee_core.h"
+#include "ha/esp_zigbee_ha_standard.h"
+#include "zb_device.h"
+#include "ha_mqtt.h"
+
+#define TAG        "zb_dev"
+#define ZB_EP      1
+
+static bool     s_joined  = false;
+static uint16_t s_pan_id  = 0;
+static uint8_t  s_channel = 0;
+
+/* ── ZCL Attribute Handler (On/Off vom Coordinator gesetzt) ─────────────── */
+static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t id,
+                                    const void *msg) {
+    if (id != ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID) return ESP_OK;
+
+    const esp_zb_zcl_set_attr_value_message_t *m = msg;
+    if (!m) return ESP_ERR_INVALID_ARG;
+
+    if (m->info.cluster == ESP_ZB_ZCL_CLUSTER_ID_ON_OFF &&
+        m->attribute.id == ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID) {
+        uint8_t val = *(uint8_t *)m->attribute.data.value;
+        char jval[4];
+        snprintf(jval, sizeof(jval), "%u", (unsigned)val);
+        ha_mqtt_publish_attr("on_off", jval);
+    }
+    return ESP_OK;
+}
+
+/* ── Netzwerk-Signale ───────────────────────────────────────────────────── */
+void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
+    uint32_t *sg_p = signal_struct->p_app_signal;
+    esp_err_t  err = signal_struct->esp_err_status;
+    esp_zb_app_signal_type_t sig = *sg_p;
+
+    switch (sig) {
+    case ESP_ZB_ZDO_SIGNAL_SKIP_STARTUP:
+        esp_zb_bdb_start_top_level_commissioning(
+            ESP_ZB_BDB_MODE_INITIALIZATION);
+        break;
+
+    case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
+    case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
+        if (err == ESP_OK) {
+            if (esp_zb_bdb_is_factory_new()) {
+                ESP_LOGI(TAG, "Erster Start – suche Netzwerk");
+                esp_zb_bdb_start_top_level_commissioning(
+                    ESP_ZB_BDB_MODE_NETWORK_STEERING);
+            } else {
+                ESP_LOGI(TAG, "Neustart – verbinde Netzwerk");
+                esp_zb_bdb_start_top_level_commissioning(
+                    ESP_ZB_BDB_MODE_NETWORK_STEERING);
+            }
+        }
+        break;
+
+    case ESP_ZB_BDB_SIGNAL_STEERING:
+        if (err == ESP_OK) {
+            s_joined  = true;
+            s_pan_id  = esp_zb_get_pan_id();
+            s_channel = esp_zb_get_current_channel();
+            ESP_LOGI(TAG, "Verbunden – PAN 0x%04hx Kanal %d", s_pan_id, s_channel);
+            ha_mqtt_publish_joined(s_pan_id, s_channel);
+        } else {
+            ESP_LOGW(TAG, "Steering fehlgeschlagen – erneuter Versuch");
+            esp_zb_scheduler_alarm(
+                (esp_zb_callback_t)(void *)esp_zb_bdb_start_top_level_commissioning,
+                ESP_ZB_BDB_MODE_NETWORK_STEERING, 5000);
+        }
+        break;
+
+    case ESP_ZB_ZDO_SIGNAL_LEAVE:
+        s_joined = false;
+        ESP_LOGI(TAG, "Netzwerk verlassen");
+        ha_mqtt_publish_left();
+        /* automatisch neu verbinden */
+        esp_zb_scheduler_alarm(
+            (esp_zb_callback_t)(void *)esp_zb_bdb_start_top_level_commissioning,
+            ESP_ZB_BDB_MODE_NETWORK_STEERING, 3000);
+        break;
+
+    default:
+        ESP_LOGD(TAG, "ZB-Signal: %s err=%s",
+                 esp_zb_zdo_signal_to_string(sig), esp_err_to_name(err));
+        break;
+    }
+}
+
+/* ── Zigbee Haupt-Task ──────────────────────────────────────────────────── */
+static void zb_task(void *arg) {
+    esp_zb_cfg_t cfg = {
+        .esp_zb_role        = ESP_ZB_DEVICE_TYPE_ROUTER,
+        .install_code_policy = false,
+        .nwk_cfg.zczr_cfg   = { .max_children = 10 },
+    };
+    esp_zb_init(&cfg);
+
+    /* On/Off Server Endpoint */
+    esp_zb_on_off_light_cfg_t light_cfg = ESP_ZB_DEFAULT_ON_OFF_LIGHT_CONFIG();
+    esp_zb_ep_list_t *ep = esp_zb_on_off_light_ep_create(ZB_EP, &light_cfg);
+    esp_zb_device_register(ep);
+
+    esp_zb_core_action_handler_register(zb_action_handler);
+
+    /* Alle Kanäle scannen (11-26) */
+    esp_zb_set_primary_network_channel_set(0x07FFF800);
+
+    ESP_ERROR_CHECK(esp_zb_start(false));
+    esp_zb_main_loop_iteration();
+}
+
+/* ── Öffentliche API ────────────────────────────────────────────────────── */
+void zb_device_start(void) {
+    esp_zb_platform_config_t pcfg = {
+        .radio_config = { .radio_mode = RADIO_MODE_NATIVE },
+        .host_config  = { .host_connection_mode = HOST_CONNECTION_MODE_NONE },
+    };
+    ESP_ERROR_CHECK(esp_zb_platform_config(&pcfg));
+    xTaskCreate(zb_task, "zb_main", 8192, NULL, 5, NULL);
+}
+
+void zb_device_set_onoff(bool on) {
+    /* Lokales Attribut setzen + reporten */
+    uint8_t val = on ? 1 : 0;
+    esp_zb_zcl_set_attribute_val(ZB_EP,
+        ESP_ZB_ZCL_CLUSTER_ID_ON_OFF,
+        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_ON_OFF_ON_OFF_ID,
+        &val, false);
+    char jval[4];
+    snprintf(jval, sizeof(jval), "%u", (unsigned)val);
+    ha_mqtt_publish_attr("on_off", jval);
+}
+
+void zb_device_permit_join(uint8_t seconds) {
+    esp_zb_bdb_open_network(seconds);
+}
+
+void zb_device_leave(void) {
+    esp_zb_zdo_device_leave_req(NULL, true, true);
+}
+
+bool     zb_device_joined(void)  { return s_joined; }
+uint16_t zb_device_pan_id(void)  { return s_pan_id; }
+uint8_t  zb_device_channel(void) { return s_channel; }
