@@ -157,7 +157,8 @@ static int ble_vprintf_hook(const char *fmt, va_list args)
         va_list c2; va_copy(c2, args);
         int n = vsnprintf(buf, sizeof(buf), fmt, c2);
         va_end(c2);
-        if (n > 0) {
+        /* NimBLE-interne Logs ausschließen – sonst Feedback-Schleife. */
+        if (n > 0 && strstr(buf, ") NimBLE:") == NULL) {
             size_t sz = (size_t)n < sizeof(buf) ? (size_t)n : sizeof(buf)-1;
             xRingbufferSendFromISR(s_ringbuf, buf, sz, NULL);
         }
@@ -176,6 +177,11 @@ int __wrap_nimble_port_init(void)
 {
     int rc = __real_nimble_port_init();
     if (rc == 0) {
+        /* Reserve pool space for NUS; ble_gatts_start() sizes its
+         * svc_entries array from ble_hs_max_services – must be done
+         * BEFORE ble_gatts_start() runs (safe here, inside the wrap). */
+        ble_gatts_count_cfg(s_nus_svcs);
+
         int r = ble_gatts_add_svcs(s_nus_svcs);
         if (r != 0) {
             ESP_LOGW(TAG, "ble_gatts_add_svcs rc=%d", r);
