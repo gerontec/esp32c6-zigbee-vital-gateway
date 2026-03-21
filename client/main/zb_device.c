@@ -10,8 +10,15 @@
 #include "esp_log.h"
 #include "esp_zigbee_core.h"
 #include "ha/esp_zigbee_ha_standard.h"
+#include "nvs_flash.h"
+#include "nvs.h"
+#include "esp_partition.h"
+#include "esp_system.h"
 #include "zb_device.h"
 #include "ha_mqtt.h"
+
+#define ZB_NVS_NAMESPACE "zb_cfg"
+#define ZB_NVS_KEY_CH    "channel"
 
 #define TAG        "zb_dev"
 #define ZB_EP      1
@@ -113,8 +120,15 @@ static void zb_task(void *arg) {
 
     esp_zb_core_action_handler_register(zb_action_handler);
 
-    /* Alle Kanäle scannen (11-26) */
-    esp_zb_set_primary_network_channel_set(0x07FFF800);
+    /* Kanal aus NVS lesen, Default 20 */
+    uint8_t ch = 20;
+    nvs_handle_t nvs_h;
+    if (nvs_open(ZB_NVS_NAMESPACE, NVS_READONLY, &nvs_h) == ESP_OK) {
+        nvs_get_u8(nvs_h, ZB_NVS_KEY_CH, &ch);
+        nvs_close(nvs_h);
+    }
+    ESP_LOGI(TAG, "Primärer Scan-Kanal: %d", ch);
+    esp_zb_set_primary_network_channel_set(1U << ch);
 
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_main_loop_iteration();
@@ -154,3 +168,29 @@ void zb_device_leave(void) {
 bool     zb_device_joined(void)  { return s_joined; }
 uint16_t zb_device_pan_id(void)  { return s_pan_id; }
 uint8_t  zb_device_channel(void) { return s_channel; }
+
+void zb_device_set_channel(uint8_t ch) {
+    if (ch < 11 || ch > 26) {
+        ESP_LOGE(TAG, "Ungültiger Kanal: %d (erlaubt: 11-26)", ch);
+        return;
+    }
+    nvs_handle_t h;
+    if (nvs_open(ZB_NVS_NAMESPACE, NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u8(h, ZB_NVS_KEY_CH, ch);
+        nvs_commit(h);
+        nvs_close(h);
+        ESP_LOGI(TAG, "Kanal %d in NVS gespeichert", ch);
+    } else {
+        ESP_LOGE(TAG, "NVS-Schreibfehler");
+        return;
+    }
+    const esp_partition_t *part = esp_partition_find_first(
+        ESP_PARTITION_TYPE_DATA, ESP_PARTITION_SUBTYPE_ANY, "zb_storage");
+    if (part) {
+        esp_err_t err = esp_partition_erase_range(part, 0, part->size);
+        ESP_LOGI(TAG, "zb_storage gelöscht: %s", esp_err_to_name(err));
+    }
+    ESP_LOGI(TAG, "Neustart für Kanalwechsel auf %d...", ch);
+    vTaskDelay(pdMS_TO_TICKS(200));
+    esp_restart();
+}

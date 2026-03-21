@@ -22,6 +22,8 @@ static void on_cmd(const char *cmd, const char *payload, int len) {
         zb_device_set_onoff(atoi(payload) != 0);
     } else if (strcmp(cmd, "permit_join") == 0) {
         zb_device_permit_join((uint8_t)atoi(payload));
+    } else if (strcmp(cmd, "set_channel") == 0) {
+        zb_device_set_channel((uint8_t)atoi(payload));
     }
 }
 
