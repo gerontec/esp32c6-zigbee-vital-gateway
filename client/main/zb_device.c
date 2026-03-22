@@ -20,8 +20,10 @@
 #define ZB_NVS_NAMESPACE "zb_cfg"
 #define ZB_NVS_KEY_CH    "channel"
 
-#define TAG        "zb_dev"
-#define ZB_EP      1
+#define TAG            "zb_dev"
+#define ZB_EP          1
+#define JOIN_RETRY_MS  30000   /* alle 30 s Join-Versuch wenn nicht verbunden */
+#define DEFAULT_CH     20
 
 static bool     s_joined  = false;
 static uint16_t s_pan_id  = 0;
@@ -45,6 +47,17 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t id,
     return ESP_OK;
 }
 
+/* ── Periodischer Join-Watchdog (alle 30 s, wenn nicht verbunden) ───────── */
+static void join_retry_alarm(uint8_t param) {
+    (void)param;
+    if (!s_joined) {
+        ESP_LOGI(TAG, "Join-Retry ch=%d", DEFAULT_CH);
+        esp_zb_set_primary_network_channel_set(1U << DEFAULT_CH);
+        esp_zb_bdb_start_top_level_commissioning(ESP_ZB_BDB_MODE_NETWORK_STEERING);
+    }
+    esp_zb_scheduler_alarm(join_retry_alarm, 0, JOIN_RETRY_MS);
+}
+
 /* ── Netzwerk-Signale ───────────────────────────────────────────────────── */
 void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
     uint32_t *sg_p = signal_struct->p_app_signal;
@@ -60,15 +73,14 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
     case ESP_ZB_BDB_SIGNAL_DEVICE_FIRST_START:
     case ESP_ZB_BDB_SIGNAL_DEVICE_REBOOT:
         if (err == ESP_OK) {
-            if (esp_zb_bdb_is_factory_new()) {
-                ESP_LOGI(TAG, "Erster Start – suche Netzwerk");
-                esp_zb_bdb_start_top_level_commissioning(
-                    ESP_ZB_BDB_MODE_NETWORK_STEERING);
-            } else {
-                ESP_LOGI(TAG, "Neustart – verbinde Netzwerk");
-                esp_zb_bdb_start_top_level_commissioning(
-                    ESP_ZB_BDB_MODE_NETWORK_STEERING);
-            }
+            ESP_LOGI(TAG, "%s – suche Netzwerk ch=%d",
+                     esp_zb_bdb_is_factory_new() ? "Erster Start" : "Neustart",
+                     DEFAULT_CH);
+            esp_zb_set_primary_network_channel_set(1U << DEFAULT_CH);
+            esp_zb_bdb_start_top_level_commissioning(
+                ESP_ZB_BDB_MODE_NETWORK_STEERING);
+            /* Watchdog starten: alle 30 s Join-Versuch wenn nicht verbunden */
+            esp_zb_scheduler_alarm(join_retry_alarm, 0, JOIN_RETRY_MS);
         }
         break;
 
@@ -80,10 +92,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
             ESP_LOGI(TAG, "Verbunden – PAN 0x%04hx Kanal %d", s_pan_id, s_channel);
             ha_mqtt_publish_joined(s_pan_id, s_channel);
         } else {
-            ESP_LOGW(TAG, "Steering fehlgeschlagen – erneuter Versuch");
-            esp_zb_scheduler_alarm(
-                (esp_zb_callback_t)(void *)esp_zb_bdb_start_top_level_commissioning,
-                ESP_ZB_BDB_MODE_NETWORK_STEERING, 5000);
+            ESP_LOGW(TAG, "Steering fehlgeschlagen – Watchdog übernimmt Retry");
         }
         break;
 
