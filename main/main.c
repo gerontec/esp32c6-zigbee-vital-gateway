@@ -26,6 +26,8 @@ static void on_uart_cmd(const char *cmd, const char *payload, int len) {
         uint8_t secs = (uint8_t)atoi(buf);
         ESP_LOGI(TAG, "permit_join %u s", secs);
         zb_gateway_permit_join(secs);
+    } else if (strcmp(cmd, "scan_chan") == 0) {
+        zb_gateway_scan_channels();
     } else if (strcmp(cmd, "set_channel") == 0) {
         uint8_t ch = (uint8_t)atoi(buf);
         ESP_LOGI(TAG, "set_channel %u", ch);

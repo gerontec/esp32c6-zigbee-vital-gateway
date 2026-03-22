@@ -108,6 +108,17 @@ def db_init():
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
         cur.execute("""
+            CREATE TABLE IF NOT EXISTS esp32_chan_scan (
+                id      INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
+                mac     CHAR(8)      NOT NULL,
+                ts      DATETIME(3)  NOT NULL,
+                ch      TINYINT UNSIGNED NOT NULL,
+                count   TINYINT UNSIGNED NOT NULL DEFAULT 0,
+                nets    TEXT,
+                INDEX (mac, ts)
+            ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
+        """)
+        cur.execute("""
             CREATE TABLE IF NOT EXISTS esp32_zigbee_data (
                 id         INT UNSIGNED AUTO_INCREMENT PRIMARY KEY,
                 mac        CHAR(8)      NOT NULL,
@@ -124,6 +135,18 @@ def db_init():
     except Exception as e:
         print(f"[DB] Fehler bei Init: {e}")
         _db_conn = None
+
+def db_insert_chan_scan(ch, count, nets_json):
+    with _db_lock:
+        try:
+            cur = _db_cursor()
+            cur.execute("""
+                INSERT INTO esp32_chan_scan (mac, ts, ch, count, nets)
+                VALUES (%s, NOW(3), %s, %s, %s)
+            """, (DB_MAC, ch, count, nets_json))
+            cur.close()
+        except Exception as e:
+            print(f"[DB] chan_scan insert: {e}")
 
 def db_upsert_gateway(status):
     with _db_lock:
@@ -209,6 +232,10 @@ def on_message(client, userdata, msg):
             print(f"[→C6] {uart_msg.strip()}")
         else:
             print(f"[WARN] Ungültiger Zigbee-Kanal: {ch} (11-26)")
+    elif cmd == "scan_chan":
+        uart_msg = json.dumps({"cmd": "scan_chan"}) + "\n"
+        ser.write(uart_msg.encode())
+        print(f"[→C6] {uart_msg.strip()}")
 
 mq.on_connect = on_connect
 mq.on_message = on_message
@@ -298,6 +325,15 @@ def dispatch(line: str):
             with _state_lock:
                 _state["permit_join"] = p
             print(f"[MQTT] {BASE}/permit_join {p}")
+
+    elif t == "scan":
+        ch = msg.get("ch")
+        if ch is not None:
+            nets = msg.get("nets", [])
+            db_insert_chan_scan(ch, msg.get("count", 0), json.dumps(nets))
+            print(f"[SCAN] ch={ch} count={msg.get('count', 0)} nets={nets}")
+        else:
+            print(f"[SCAN] state={msg.get('state')}")
 
 # ── Web-Dashboard ──────────────────────────────────────────────────────────
 def _html():

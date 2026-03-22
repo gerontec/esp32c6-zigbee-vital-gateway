@@ -32,3 +32,6 @@ bool        ha_mqtt_connected(void);
 const char *ha_mqtt_base_topic(void);
 void        ha_mqtt_logf(const char *tag, const char *fmt, ...)
     __attribute__((format(printf, 2, 3)));
+
+/* Rohe JSON-Zeile direkt ausgeben (für scan-Ergebnisse) */
+void ha_mqtt_emit_raw(const char *line);

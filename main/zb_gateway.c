@@ -321,3 +321,73 @@ void zb_gateway_list_devices(void) {
     }
     xSemaphoreGive(s_dev_mutex);
 }
+
+/* ── Channel-Scan (Kanal 11-26, ~4s je Kanal) ──────────────────────────── */
+/* forward decl: library exports zdo variant */
+void esp_zb_zdo_active_scan_request(uint32_t channel_mask, uint8_t scan_duration, esp_zb_zdo_scan_complete_callback_t user_cb);
+
+#define SCAN_CH_FIRST   11
+#define SCAN_CH_LAST    26
+#define SCAN_DURATION   7     /* 2^(7+1)-1 * 15.36 ms ≈ 3.9 s per channel */
+
+static SemaphoreHandle_t s_scan_sem        = NULL;
+static uint8_t           s_scan_cur_ch     = 0;
+static uint8_t           s_scan_net_count  = 0;
+static char              s_scan_net_buf[512];
+static TaskHandle_t      s_scan_task_h     = NULL;
+
+static void scan_cb(esp_zb_zdp_status_t status, uint8_t count,
+                    esp_zb_network_descriptor_t *nwk) {
+    /* Gefundene Netzwerke als JSON-Array bauen */
+    char *p = s_scan_net_buf;
+    int   r = (int)sizeof(s_scan_net_buf);
+    int   n = snprintf(p, r, "[");
+    p += n; r -= n;
+    for (uint8_t i = 0; i < count && r > 4; i++) {
+        n = snprintf(p, r, "%s{\"pan\":\"0x%04x\",\"open\":%s}",
+                     i ? "," : "",
+                     nwk[i].short_pan_id,
+                     nwk[i].permit_joining ? "true" : "false");
+        p += n; r -= n;
+    }
+    snprintf(p, r, "]");
+    s_scan_net_count = count;
+    xSemaphoreGive(s_scan_sem);
+}
+
+static void scan_task(void *arg) {
+    char line[600];
+    for (uint8_t ch = SCAN_CH_FIRST; ch <= SCAN_CH_LAST; ch++) {
+        s_scan_cur_ch    = ch;
+        s_scan_net_count = 0;
+        strcpy(s_scan_net_buf, "[]");
+
+        snprintf(line, sizeof(line),
+                 "{\"t\":\"scan\",\"state\":\"scanning\",\"ch\":%d}", ch);
+        ha_mqtt_emit_raw(line);
+
+        esp_zb_zdo_active_scan_request(1U << ch, SCAN_DURATION, scan_cb);
+
+        /* Auf Callback warten (Timeout 12 s) */
+        xSemaphoreTake(s_scan_sem, pdMS_TO_TICKS(12000));
+
+        snprintf(line, sizeof(line),
+                 "{\"t\":\"scan\",\"ch\":%d,\"count\":%d,\"nets\":%s}",
+                 ch, s_scan_net_count, s_scan_net_buf);
+        ha_mqtt_emit_raw(line);
+
+        vTaskDelay(pdMS_TO_TICKS(300));
+    }
+    ha_mqtt_emit_raw("{\"t\":\"scan\",\"state\":\"done\"}");
+    s_scan_task_h = NULL;
+    vTaskDelete(NULL);
+}
+
+void zb_gateway_scan_channels(void) {
+    if (s_scan_task_h) {
+        ha_mqtt_emit_raw("{\"t\":\"scan\",\"state\":\"busy\"}");
+        return;
+    }
+    if (!s_scan_sem) s_scan_sem = xSemaphoreCreateBinary();
+    xTaskCreate(scan_task, "chan_scan", 4096, NULL, 2, &s_scan_task_h);
+}

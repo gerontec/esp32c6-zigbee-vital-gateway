@@ -62,6 +62,8 @@ static void rx_task(void *arg) {
                 char secs_str[8] = "180";
                 if (p) snprintf(secs_str, sizeof(secs_str), "%d", atoi(p + 6));
                 s_cmd_cb("permit_join", secs_str, strlen(secs_str));
+            } else if (strstr(buf, "scan_chan")) {
+                s_cmd_cb("scan_chan", "", 0);
             } else if (strstr(buf, "set_channel")) {
                 char *p = strstr(buf, "\"ch\":");
                 char ch_str[4] = "20";
@@ -124,3 +126,5 @@ void ha_mqtt_publish_permit_join(bool open, uint8_t seconds) {
 bool        ha_mqtt_connected(void)          { return true; }
 const char *ha_mqtt_base_topic(void)         { return "c6/usb"; }
 void        ha_mqtt_logf(const char *t, const char *f, ...) { (void)t; (void)f; }
+
+void ha_mqtt_emit_raw(const char *line) { emit(line); }
