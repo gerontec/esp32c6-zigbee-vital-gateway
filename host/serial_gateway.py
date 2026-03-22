@@ -2,6 +2,7 @@
 """
 serial_gateway.py – liest JSON-Lines vom ESP32-C6 (COM-Port)
 und published sie als MQTT an den Broker + schreibt in MariaDB.
+Web-Dashboard auf Port 8080.
 
 Verwendung:
     python3 serial_gateway.py
@@ -10,9 +11,12 @@ Verwendung:
 import argparse
 import json
 import os
-import sys
 import threading
 import time
+from datetime import datetime
+from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qs, urlparse
+
 import serial
 import paho.mqtt.client as mqtt
 import pymysql
@@ -22,6 +26,7 @@ DEFAULT_PORT   = "/dev/ttyACM0"
 DEFAULT_BAUD   = 115200
 DEFAULT_BROKER = "192.168.178.218"
 DEFAULT_MQPORT = 1883
+WEB_PORT       = int(os.getenv("WEB_PORT", "8080"))
 
 DB_HOST = os.getenv("DB_HOST", "192.168.178.218")
 DB_PORT = int(os.getenv("DB_PORT", "3306"))
@@ -41,8 +46,22 @@ ap.add_argument("--base",   default="gw/c6serial",
                 help="MQTT base topic (z.B. gw/coordinator)")
 args = ap.parse_args()
 
-BASE    = args.base
-DB_MAC  = BASE.split("/")[-1][:8]   # "coordinator" → "coordina", "b0a60487" bleibt
+BASE   = args.base
+DB_MAC = BASE.split("/")[-1][:8]
+
+# ── In-Memory State ────────────────────────────────────────────────────────
+_state_lock = threading.Lock()
+_state = {
+    "status":       "offline",
+    "uptime":       0,
+    "channel":      0,
+    "pan":          "–",
+    "permit_join":  {"open": False, "seconds": 0},
+    "devices":      {},   # addr → {ieee, name, last_seen, clusters: {name: value}}
+}
+
+def _now():
+    return datetime.now().strftime("%H:%M:%S")
 
 # ── MariaDB ────────────────────────────────────────────────────────────────
 _db_conn = None
@@ -169,6 +188,8 @@ def on_connect(client, userdata, flags, rc):
         client.publish(f"{BASE}/status", "online", retain=True, qos=1)
         client.subscribe(f"{BASE}/cmd/+", qos=1)
         db_upsert_gateway("online")
+        with _state_lock:
+            _state["status"] = "online"
     else:
         print(f"[MQTT] Fehler rc={rc}")
 
@@ -200,28 +221,22 @@ class CoordinatorSerial:
         self.ser.port     = port
         self.ser.baudrate = baudrate
         self.ser.timeout  = 1
-        self.ser.dtr      = False  # DTR LOW vor open → kein Reset
-        self.ser.rts      = False  # RTS LOW vor open → kein Reset
+        self.ser.dtr      = False
+        self.ser.rts      = False
         self.ser.open()
         time.sleep(0.5)
-        self.ser.dtr = False       # nochmal nach open() sicherstellen
+        self.ser.dtr = False
         print(f"[Serial] {port} @ {baudrate} offen (DTR/RTS=LOW)")
 
-    def read(self, n):
-        return self.ser.read(n)
-
-    def write(self, data):
-        return self.ser.write(data)
+    def read(self, n):   return self.ser.read(n)
+    def write(self, d):  return self.ser.write(d)
+    def close(self):     self.ser.close()
 
     @property
-    def in_waiting(self):
-        return self.ser.in_waiting
+    def in_waiting(self): return self.ser.in_waiting
 
-    def close(self):
-        self.ser.close()
-
+# ── Dispatcher ─────────────────────────────────────────────────────────────
 def dispatch(line: str):
-    # Jede C6-Ausgabe (roh) für die Web-Konsole publishen
     mq.publish(f"{BASE}/console", line, qos=0)
 
     try:
@@ -236,13 +251,14 @@ def dispatch(line: str):
     if t == "boot":
         mq.publish(f"{BASE}/status", "online", retain=True, qos=1)
         db_upsert_gateway("online")
+        with _state_lock:
+            _state["status"] = "online"
         print("[C6] boot")
 
     elif t == "vitals":
         p = msg.get("p")
         if p:
             mq.publish(f"{BASE}/mr60bha2", json.dumps(p))
-            print(f"[MQTT] {BASE}/mr60bha2 {p}")
 
     elif t == "zigbee":
         addr = "0x{:04x}".format(msg.get("addr", 0))
@@ -254,17 +270,151 @@ def dispatch(line: str):
             print(f"[MQTT] {topic} {p}")
             db_upsert_zigbee_device(addr, msg.get("ieee", ""))
             db_insert_zigbee_data(addr, sub, p)
+            with _state_lock:
+                dev = _state["devices"].setdefault(addr, {
+                    "ieee": msg.get("ieee", ""), "name": addr,
+                    "last_seen": "", "clusters": {}
+                })
+                val = _extract_value(sub, p)
+                dev["clusters"][sub] = val if val is not None else json.dumps(p)
+                dev["last_seen"] = _now()
 
     elif t == "heartbeat":
         mq.publish(f"{BASE}/heartbeat", line, retain=True, qos=1)
         db_upsert_gateway("online")
+        with _state_lock:
+            _state.update({
+                "status":  "online",
+                "uptime":  msg.get("uptime", 0),
+                "channel": msg.get("ch", 0),
+                "pan":     msg.get("pan", "–"),
+            })
         print(f"[HB] uptime={msg.get('uptime')}s ch={msg.get('ch')} pan={msg.get('pan')}")
 
     elif t == "permit_join":
-        p = msg.get("p")
+        p = msg.get("p", {})
         if p:
             mq.publish(f"{BASE}/permit_join", json.dumps(p), qos=1)
+            with _state_lock:
+                _state["permit_join"] = p
             print(f"[MQTT] {BASE}/permit_join {p}")
+
+# ── Web-Dashboard ──────────────────────────────────────────────────────────
+def _html():
+    with _state_lock:
+        s = json.loads(json.dumps(_state))   # deep copy
+
+    online = s["status"] == "online"
+    badge  = ("online" if online else "offline")
+
+    pj     = s["permit_join"]
+    pj_txt = f"🔓 offen ({pj.get('seconds',0)} s)" if pj.get("open") else "🔒 geschlossen"
+
+    dev_rows = ""
+    for addr, d in s["devices"].items():
+        clusters = " &nbsp;|&nbsp; ".join(
+            f"<b>{k}</b>: {v}" for k, v in d["clusters"].items()
+        )
+        dev_rows += f"""
+        <tr>
+          <td>{addr}</td>
+          <td>{d.get('name', addr)}</td>
+          <td>{d.get('ieee','')}</td>
+          <td>{clusters or '–'}</td>
+          <td>{d.get('last_seen','–')}</td>
+        </tr>"""
+
+    return f"""<!DOCTYPE html>
+<html lang="de"><head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="10">
+<title>ESP32-C6 Gateway</title>
+<style>
+  body{{background:#1a1a2e;color:#e0e0e0;font-family:monospace;margin:2em}}
+  h1{{color:#00d4ff}} h2{{color:#a0c4ff;border-bottom:1px solid #333;padding-bottom:.3em}}
+  h3{{color:#7ecbff;margin-top:1.2em}}
+  table{{border-collapse:collapse;width:100%;margin:.5em 0}}
+  th,td{{border:1px solid #444;padding:.4em .8em;text-align:left}}
+  th{{background:#2a2a4a}} tr:nth-child(even){{background:#1e1e3a}}
+  .badge{{padding:.2em .6em;border-radius:4px;font-size:.85em;margin-left:.5em}}
+  .online{{background:#1a5c1a;color:#7fff7f}}
+  .offline{{background:#5c1a1a;color:#ff7f7f}}
+  button{{background:#2a4a7a;color:#e0e0e0;border:1px solid #4a6a9a;
+          padding:.3em .8em;cursor:pointer;border-radius:3px;margin-right:.4em}}
+  button:hover{{background:#3a6aaa}}
+  section{{background:#16213e;padding:1.2em;margin:1.2em 0;border-radius:6px}}
+  footer{{margin-top:2em;color:#666;font-size:.85em}}
+</style></head>
+<body>
+<h1>ESP32-C6 Zigbee Gateway</h1>
+<p>Auto-Refresh 10 s &nbsp;|&nbsp; <a href="/api/state" style="color:#7ecbff">JSON</a></p>
+<section>
+  <h2>Coordinator <code>{BASE}</code>
+    <span class="badge {badge}">{s['status']}</span>
+  </h2>
+  <table>
+    <tr><th>Uptime</th><td>{s['uptime']} s</td></tr>
+    <tr><th>Kanal</th><td>{s['channel']}</td></tr>
+    <tr><th>PAN</th><td>{s['pan']}</td></tr>
+    <tr><th>Permit Join</th><td>{pj_txt}</td></tr>
+  </table>
+  <h3>Permit Join</h3>
+  <form method="POST" action="/api/permit_join">
+    <button name="secs" value="180">🔓 180 s öffnen</button>
+    <button name="secs" value="0">🔒 Schließen</button>
+  </form>
+  <h3>Zigbee-Geräte ({len(s['devices'])})</h3>
+  <table>
+    <tr><th>Adresse</th><th>Name</th><th>IEEE</th><th>Werte</th><th>Zuletzt</th></tr>
+    {dev_rows or '<tr><td colspan="5"><em>keine Geräte</em></td></tr>'}
+  </table>
+</section>
+<footer>
+  Base: <code>{BASE}</code> &nbsp;|&nbsp; DB: <code>{DB_HOST}/{DB_NAME}</code>
+</footer>
+</body></html>"""
+
+
+class _Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass   # kein Access-Log im stdout
+
+    def _send(self, code, ctype, body):
+        data = body.encode() if isinstance(body, str) else body
+        self.send_response(code)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", len(data))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        path = urlparse(self.path).path
+        if path in ("/", "/index.html"):
+            self._send(200, "text/html; charset=utf-8", _html())
+        elif path == "/api/state":
+            with _state_lock:
+                self._send(200, "application/json", json.dumps(_state, indent=2))
+        else:
+            self._send(404, "text/plain", "Not Found")
+
+    def do_POST(self):
+        length = int(self.headers.get("Content-Length", 0))
+        params = parse_qs(self.rfile.read(length).decode("utf-8", errors="replace"))
+        path   = urlparse(self.path).path
+
+        if path == "/api/permit_join":
+            secs = params.get("secs", ["0"])[0]
+            mq.publish(f"{BASE}/cmd/permit_join", secs, qos=1)
+            print(f"[Web] permit_join {secs}s")
+        self.send_response(303)
+        self.send_header("Location", "/")
+        self.end_headers()
+
+
+def _run_web():
+    srv = HTTPServer(("0.0.0.0", WEB_PORT), _Handler)
+    print(f"[Web] Dashboard → http://0.0.0.0:{WEB_PORT}/")
+    srv.serve_forever()
 
 # ── Start ───────────────────────────────────────────────────────────────────
 db_init()
@@ -275,6 +425,8 @@ mq.loop_start()
 
 print(f"[Serial] öffne {args.port} @ {args.baud} …")
 ser = CoordinatorSerial(args.port, args.baud)
+
+threading.Thread(target=_run_web, daemon=True).start()
 
 # ── Hauptschleife ───────────────────────────────────────────────────────────
 print("[Bridge] läuft – Ctrl+C zum Beenden")
