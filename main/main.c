@@ -39,12 +39,18 @@ static void on_uart_cmd(const char *cmd, const char *payload, int len) {
 #define HEARTBEAT_INTERVAL_MS 10000
 
 static void heartbeat_task(void *arg) {
+    char lqi_buf[256];
+    char line[384];
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_INTERVAL_MS));
         uint32_t uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
         uint8_t  ch       = esp_zb_get_current_channel();
         uint16_t pan      = esp_zb_get_pan_id();
-        ha_mqtt_publish_heartbeat(uptime_s, ch, pan);
+        zb_gateway_lqi_json(lqi_buf, sizeof(lqi_buf));
+        snprintf(line, sizeof(line),
+            "{\"t\":\"heartbeat\",\"uptime\":%lu,\"ch\":%u,\"pan\":\"0x%04x\",\"dev\":%s}",
+            (unsigned long)uptime_s, (unsigned)ch, (unsigned)pan, lqi_buf);
+        ha_mqtt_emit_raw(line);
     }
 }
 

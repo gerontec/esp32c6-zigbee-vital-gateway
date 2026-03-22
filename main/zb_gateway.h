@@ -20,3 +20,7 @@ void zb_gateway_set_channel(uint8_t ch);
 
 /* Alle Kanäle 11-26 scannen (~4s/Kanal), Ergebnisse als JSON ausgeben */
 void zb_gateway_scan_channels(void);
+
+
+/* LQI aller bekannten Devices als JSON-Array in buf schreiben */
+void zb_gateway_lqi_json(char *buf, size_t len);

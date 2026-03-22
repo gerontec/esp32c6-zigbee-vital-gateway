@@ -10,6 +10,7 @@
 #include "ha/esp_zigbee_ha_standard.h"
 #include "zb_gateway.h"
 #include "ha_mqtt.h"
+#include "aps/esp_zigbee_aps.h"
 
 #define ZB_DEFAULT_CHANNEL  20
 #define ZB_FALLBACK_CHANNEL 25
@@ -25,6 +26,7 @@ typedef struct {
     uint16_t short_addr;
     uint8_t  ieee[8];
     bool     used;
+    uint8_t  lqi;   /* letzte LQI vom APS-Layer */
 } zb_device_t;
 
 static zb_device_t  s_devices[MAX_DEVICES];
@@ -214,6 +216,8 @@ static uint8_t load_channel(void) {
     return ch;
 }
 
+static bool aps_data_ind_cb(esp_zb_apsde_data_ind_t ind);  /* fwd decl */
+
 /* ── Zigbee-Haupttask ───────────────────────────────────────────────────── */
 static void zb_task(void *arg) {
     uint8_t ch = load_channel();
@@ -236,6 +240,7 @@ static void zb_task(void *arg) {
     esp_zb_set_primary_network_channel_set(1U << ch);
     esp_zb_set_secondary_network_channel_set(1U << fallback);
 
+    esp_zb_aps_data_indication_handler_register(aps_data_ind_cb);
     ESP_ERROR_CHECK(esp_zb_start(false));
     esp_zb_main_loop_iteration();
 }
@@ -309,6 +314,37 @@ void zb_gateway_set_channel(uint8_t ch) {
     ESP_LOGI(TAG, "Neustart für Kanalwechsel auf %d...", ch);
     vTaskDelay(pdMS_TO_TICKS(200));
     esp_restart();
+}
+
+
+/* ── APS-Data-Indication: LQI je Device tracken ────────────────────────── */
+static bool aps_data_ind_cb(esp_zb_apsde_data_ind_t ind) {
+    xSemaphoreTake(s_dev_mutex, portMAX_DELAY);
+    zb_device_t *d = find_or_add(ind.src_short_addr, NULL);
+    if (d) d->lqi = (uint8_t)ind.lqi;
+    xSemaphoreGive(s_dev_mutex);
+    return false;   /* nicht konsumiert */
+}
+
+/* LQI-JSON: [{"addr":"0x0684","lqi":220},...] */
+void zb_gateway_lqi_json(char *buf, size_t len) {
+    xSemaphoreTake(s_dev_mutex, portMAX_DELAY);
+    char *p = buf;
+    size_t r = len;
+    int n = snprintf(p, r, "[");
+    p += n; r -= (size_t)n;
+    bool first = true;
+    for (int i = 0; i < MAX_DEVICES && r > 4; i++) {
+        if (!s_devices[i].used) continue;
+        n = snprintf(p, r, "%s{\"addr\":\"0x%04x\",\"lqi\":%u}",
+                     first ? "" : ",",
+                     s_devices[i].short_addr,
+                     (unsigned)s_devices[i].lqi);
+        p += n; r -= (size_t)n;
+        first = false;
+    }
+    snprintf(p, r, "]");
+    xSemaphoreGive(s_dev_mutex);
 }
 
 void zb_gateway_list_devices(void) {

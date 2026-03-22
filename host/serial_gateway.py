@@ -316,7 +316,14 @@ def dispatch(line: str):
                 "channel": msg.get("ch", 0),
                 "pan":     msg.get("pan", "–"),
             })
-        print(f"[HB] uptime={msg.get('uptime')}s ch={msg.get('ch')} pan={msg.get('pan')}")
+            for d in msg.get("dev", []):
+                addr = d.get("addr")
+                lqi  = d.get("lqi", 0)
+                if addr and addr in _state["devices"]:
+                    _state["devices"][addr]["lqi"] = lqi
+        devs = msg.get("dev", [])
+        lqi_str = " ".join(f"{d['addr']}={d['lqi']}" for d in devs) if devs else "–"
+        print(f"[HB] uptime={msg.get('uptime')}s ch={msg.get('ch')} pan={msg.get('pan')} lqi=[{lqi_str}]")
 
     elif t == "permit_join":
         p = msg.get("p", {})
@@ -351,12 +358,15 @@ def _html():
         clusters = " &nbsp;|&nbsp; ".join(
             f"<b>{k}</b>: {v}" for k, v in d["clusters"].items()
         )
+        lqi = d.get("lqi", "–")
+        lqi_bar = f'<meter value="{lqi}" min="0" max="255" style="width:60px"></meter> {lqi}' if isinstance(lqi, int) else "–"
         dev_rows += f"""
         <tr>
           <td>{addr}</td>
           <td>{d.get('name', addr)}</td>
           <td>{d.get('ieee','')}</td>
           <td>{clusters or '–'}</td>
+          <td>{lqi_bar}</td>
           <td>{d.get('last_seen','–')}</td>
         </tr>"""
 
@@ -401,7 +411,7 @@ def _html():
   </form>
   <h3>Zigbee-Geräte ({len(s['devices'])})</h3>
   <table>
-    <tr><th>Adresse</th><th>Name</th><th>IEEE</th><th>Werte</th><th>Zuletzt</th></tr>
+    <tr><th>Adresse</th><th>Name</th><th>IEEE</th><th>Werte</th><th>LQI</th><th>Zuletzt</th></tr>
     {dev_rows or '<tr><td colspan="5"><em>keine Geräte</em></td></tr>'}
   </table>
 </section>
