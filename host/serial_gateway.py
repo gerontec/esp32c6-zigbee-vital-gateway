@@ -455,12 +455,12 @@ def _run_web():
 # ── Start ───────────────────────────────────────────────────────────────────
 db_init()
 
+print(f"[Serial] öffne {args.port} @ {args.baud} …")
+ser = CoordinatorSerial(args.port, args.baud)
+
 print(f"[MQTT] verbinde {args.broker}:{args.mqport} …")
 mq.connect(args.broker, args.mqport, keepalive=60)
 mq.loop_start()
-
-print(f"[Serial] öffne {args.port} @ {args.baud} …")
-ser = CoordinatorSerial(args.port, args.baud)
 
 threading.Thread(target=_run_web, daemon=True).start()
 
