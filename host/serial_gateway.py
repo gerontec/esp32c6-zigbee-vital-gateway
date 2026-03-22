@@ -132,14 +132,15 @@ def db_init():
         """)
         # Bekannte Devices aus DB in State laden
         cur.execute("""
-            SELECT addr, ieee, name FROM esp32_zigbee_devices WHERE mac=%s
+            SELECT addr, ieee, name, last_seen FROM esp32_zigbee_devices WHERE mac=%s
         """, (DB_MAC,))
         with _state_lock:
             for row in cur.fetchall():
-                addr, ieee, name = row
+                addr, ieee, name, last_seen = row
+                ts = last_seen.strftime("%H:%M:%S") if last_seen else "–"
                 _state["devices"].setdefault(addr, {
                     "ieee": ieee or "", "name": name or addr,
-                    "last_seen": "–", "clusters": {}
+                    "last_seen": ts, "clusters": {}
                 })
         cur.close()
         print(f"[DB] verbunden {DB_HOST}/{DB_NAME} mac={DB_MAC} devices={len(_state['devices'])}")
