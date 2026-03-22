@@ -130,8 +130,19 @@ def db_init():
                 INDEX (mac, addr, cluster, ts)
             ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4
         """)
+        # Bekannte Devices aus DB in State laden
+        cur.execute("""
+            SELECT addr, ieee, name FROM esp32_zigbee_devices WHERE mac=%s
+        """, (DB_MAC,))
+        with _state_lock:
+            for row in cur.fetchall():
+                addr, ieee, name = row
+                _state["devices"].setdefault(addr, {
+                    "ieee": ieee or "", "name": name or addr,
+                    "last_seen": "–", "clusters": {}
+                })
         cur.close()
-        print(f"[DB] verbunden {DB_HOST}/{DB_NAME} mac={DB_MAC}")
+        print(f"[DB] verbunden {DB_HOST}/{DB_NAME} mac={DB_MAC} devices={len(_state['devices'])}")
     except Exception as e:
         print(f"[DB] Fehler bei Init: {e}")
         _db_conn = None
@@ -319,8 +330,11 @@ def dispatch(line: str):
             for d in msg.get("dev", []):
                 addr = d.get("addr")
                 lqi  = d.get("lqi", 0)
-                if addr and addr in _state["devices"]:
-                    _state["devices"][addr]["lqi"] = lqi
+                if addr:
+                    dev = _state["devices"].setdefault(addr, {
+                        "ieee": "", "name": addr, "last_seen": "", "clusters": {}
+                    })
+                    dev["lqi"] = lqi
         devs = msg.get("dev", [])
         lqi_str = " ".join(f"{d['addr']}={d['lqi']}" for d in devs) if devs else "–"
         print(f"[HB] uptime={msg.get('uptime')}s ch={msg.get('ch')} pan={msg.get('pan')} lqi=[{lqi_str}]")
