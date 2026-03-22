@@ -307,13 +307,20 @@ def dispatch(line: str):
             topic = f"{BASE}/zigbee/{addr}/{sub}"
             mq.publish(topic, json.dumps(p))
             print(f"[MQTT] {topic} {p}")
-            db_upsert_zigbee_device(addr, msg.get("ieee", ""))
+            ieee = msg.get("ieee", "")
+            db_upsert_zigbee_device(addr, ieee)
             db_insert_zigbee_data(addr, sub, p)
             with _state_lock:
+                # Alten Eintrag mit gleicher IEEE entfernen (Adresse nach Rejoin geändert)
+                if ieee:
+                    old = [a for a, d in _state["devices"].items()
+                           if d.get("ieee") == ieee and a != addr]
+                    for a in old:
+                        del _state["devices"][a]
                 dev = _state["devices"].setdefault(addr, {
-                    "ieee": msg.get("ieee", ""), "name": addr,
-                    "last_seen": "", "clusters": {}
+                    "ieee": ieee, "name": addr, "last_seen": "", "clusters": {}
                 })
+                dev["ieee"] = ieee
                 val = _extract_value(sub, p)
                 dev["clusters"][sub] = val if val is not None else json.dumps(p)
                 dev["last_seen"] = _now()
