@@ -69,6 +69,28 @@ static void rx_task(void *arg) {
                 char ch_str[4] = "20";
                 if (p) snprintf(ch_str, sizeof(ch_str), "%d", atoi(p + 5));
                 s_cmd_cb("set_channel", ch_str, strlen(ch_str));
+            } else if (strstr(buf, "ota_start")) {
+                char *ps = strstr(buf, "\"size\":");
+                char *pv = strstr(buf, "\"ver\":");
+                char payload[32] = "";
+                if (ps) {
+                    long sz  = atol(ps + 7);
+                    long ver = pv ? atol(pv + 6) : 1;
+                    snprintf(payload, sizeof(payload), "%ld,%ld", sz, ver);
+                }
+                s_cmd_cb("ota_start", payload, strlen(payload));
+            } else if (strstr(buf, "ota_data")) {
+                /* {"cmd":"ota_data","off":N,"data":"HEX"} */
+                char *pd = strstr(buf, "\"data\":\"");
+                if (pd) {
+                    pd += 8;  /* skip past "data":" */
+                    char *end = strchr(pd, '"');
+                    if (end) {
+                        *end = '\0';
+                        uint8_t byte_count = (uint8_t)((end - pd) / 2);
+                        s_cmd_cb("ota_data", pd, byte_count);
+                    }
+                }
             }
         }
     }

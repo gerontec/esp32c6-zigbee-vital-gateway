@@ -9,6 +9,7 @@
 #include "esp_zigbee_core.h"
 #include "ha_mqtt.h"
 #include "zb_gateway.h"
+#include "zb_ota_server.h"
 
 /* Permit-Join-Taste (Boot-Taste = GPIO9) */
 #define BTN_PERMIT_JOIN  9
@@ -32,11 +33,20 @@ static void on_uart_cmd(const char *cmd, const char *payload, int len) {
         uint8_t ch = (uint8_t)atoi(buf);
         ESP_LOGI(TAG, "set_channel %u", ch);
         zb_gateway_set_channel(ch);
+    } else if (strcmp(cmd, "ota_start") == 0) {
+        /* payload: "SIZE,VERSION" */
+        uint32_t size = (uint32_t)atol(payload);
+        const char *comma = strchr(payload, ',');
+        uint32_t ver = comma ? (uint32_t)atol(comma + 1) : 1;
+        zb_ota_server_start(size, ver);
+    } else if (strcmp(cmd, "ota_data") == 0) {
+        /* payload = hex string, len = byte count */
+        zb_ota_server_feed_data(payload, (uint8_t)len);
     }
 }
 
-/* ── Heartbeat-Task: alle 30 s Status-JSON senden ───────────────────────── */
-#define HEARTBEAT_INTERVAL_MS 10000
+/* ── Heartbeat-Task: alle 60 s Status-JSON senden ───────────────────────── */
+#define HEARTBEAT_INTERVAL_MS 60000
 
 static void heartbeat_task(void *arg) {
     char lqi_buf[256];

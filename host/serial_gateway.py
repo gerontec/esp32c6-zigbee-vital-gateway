@@ -58,7 +58,17 @@ _state = {
     "pan":          "–",
     "permit_join":  {"open": False, "seconds": 0},
     "devices":      {},   # addr → {ieee, name, last_seen, clusters: {name: value}}
+    "ota": {
+        "status":      "idle",   # idle | pending | transferring | done | error
+        "bin_path":    "",
+        "size":        0,
+        "version":     1,
+        "transferred": 0,
+    },
 }
+
+# ── OTA state machine ───────────────────────────────────────────────────────
+_ota_file = None   # open file handle during transfer
 
 def _now():
     return datetime.now().strftime("%H:%M:%S")
@@ -363,6 +373,90 @@ def dispatch(line: str):
         else:
             print(f"[SCAN] state={msg.get('state')}")
 
+    elif t == "ota_req":
+        _ota_handle_req(msg.get("off", 0), msg.get("sz", 64))
+
+    elif t == "ota_status":
+        st = msg.get("status", "?")
+        with _state_lock:
+            _state["ota"]["status"] = st
+        print(f"[OTA] coordinator: {st} size={msg.get('size')} ver={msg.get('ver')}")
+
+    elif t == "ota_srv_status":
+        st = msg.get("status", "?")
+        addr = msg.get("addr", "?")
+        print(f"[OTA] client {addr}: {st}")
+        if st == "done":
+            with _state_lock:
+                _state["ota"]["status"] = "done"
+            _ota_close()
+
+
+def _ota_start(bin_path: str):
+    """Startet OTA: öffnet Binary, sendet ota_start an Coordinator."""
+    global _ota_file
+    import os as _os
+    if not bin_path:
+        bin_path = _os.path.join(
+            _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+            "client", "build", "zigbee-client.bin"
+        )
+    if not _os.path.isfile(bin_path):
+        print(f"[OTA] Datei nicht gefunden: {bin_path}")
+        with _state_lock:
+            _state["ota"]["status"] = "error"
+        return
+    size = _os.path.getsize(bin_path)
+    # Versionsnummer aus Datei-Mtime ableiten (Unix-Timestamp, 32-bit)
+    version = int(_os.path.getmtime(bin_path)) & 0xFFFFFFFF
+    _ota_close()
+    _ota_file = open(bin_path, "rb")
+    with _state_lock:
+        _state["ota"].update({
+            "status":      "pending",
+            "bin_path":    bin_path,
+            "size":        size,
+            "version":     version,
+            "transferred": 0,
+        })
+    cmd = json.dumps({"cmd": "ota_start", "size": size, "ver": version})
+    ser.write((cmd + "\n").encode())
+    print(f"[OTA] gestartet: {bin_path} size={size} ver=0x{version:08x}")
+
+
+def _ota_handle_req(offset: int, size: int):
+    """Antwortet auf ota_req: liest Chunk aus Binärdatei und sendet hex-kodiert."""
+    global _ota_file
+    with _state_lock:
+        ota = _state["ota"]
+        active = ota["status"] in ("pending", "transferring")
+
+    if not active or _ota_file is None:
+        print(f"[OTA] ota_req off={offset} aber kein Transfer aktiv")
+        return
+
+    try:
+        _ota_file.seek(offset)
+        data = _ota_file.read(size)
+        hex_data = data.hex()
+        cmd = json.dumps({"cmd": "ota_data", "off": offset, "data": hex_data})
+        ser.write((cmd + "\n").encode())
+        with _state_lock:
+            _state["ota"]["status"] = "transferring"
+            _state["ota"]["transferred"] = offset + len(data)
+    except Exception as e:
+        print(f"[OTA] Fehler beim Lesen: {e}")
+        _ota_close()
+        with _state_lock:
+            _state["ota"]["status"] = "error"
+
+
+def _ota_close():
+    global _ota_file
+    if _ota_file:
+        _ota_file.close()
+        _ota_file = None
+
 # ── Web-Dashboard ──────────────────────────────────────────────────────────
 def _html():
     with _state_lock:
@@ -373,6 +467,12 @@ def _html():
 
     pj     = s["permit_join"]
     pj_txt = f"🔓 offen ({pj.get('seconds',0)} s)" if pj.get("open") else "🔒 geschlossen"
+
+    import os as _os
+    default_bin = _os.path.join(
+        _os.path.dirname(_os.path.dirname(_os.path.abspath(__file__))),
+        "client", "build", "zigbee-client.bin"
+    )
 
     dev_rows = ""
     for addr, d in s["devices"].items():
@@ -430,6 +530,17 @@ def _html():
     <button name="secs" value="180">🔓 180 s öffnen</button>
     <button name="secs" value="0">🔒 Schließen</button>
   </form>
+  <h3>OTA Firmware-Update</h3>
+  <table>
+    <tr><th>Status</th><td>{s['ota']['status']}</td></tr>
+    <tr><th>Binary</th><td>{s['ota']['bin_path'] or '–'}</td></tr>
+    <tr><th>Fortschritt</th><td>{s['ota']['transferred']} / {s['ota']['size']} Byte</td></tr>
+  </table>
+  <form method="POST" action="/api/ota">
+    <input name="path" value="{s['ota']['bin_path'] or default_bin}" size="60"
+           style="background:#2a2a4a;color:#e0e0e0;border:1px solid #555;padding:.25em .4em">
+    <button type="submit">⬆ OTA starten</button>
+  </form>
   <h3>Zigbee-Geräte ({len(s['devices'])})</h3>
   <table>
     <tr><th>Adresse</th><th>Name</th><th>IEEE</th><th>Werte</th><th>LQI</th><th>Zuletzt</th></tr>
@@ -473,6 +584,11 @@ class _Handler(BaseHTTPRequestHandler):
             secs = params.get("secs", ["0"])[0]
             mq.publish(f"{BASE}/cmd/permit_join", secs, qos=1)
             print(f"[Web] permit_join {secs}s")
+
+        elif path == "/api/ota":
+            bin_path = params.get("path", [""])[0].strip()
+            _ota_start(bin_path)
+
         self.send_response(303)
         self.send_header("Location", "/")
         self.end_headers()

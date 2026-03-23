@@ -14,7 +14,11 @@
 #include "nvs.h"
 #include "esp_partition.h"
 #include "esp_system.h"
+#include "esp_zigbee_cluster.h"
+#include "esp_zigbee_attribute.h"
+#include "esp_zigbee_endpoint.h"
 #include "zb_device.h"
+#include "zb_ota_client.h"
 #include "ha_mqtt.h"
 
 #define ZB_NVS_NAMESPACE "zb_cfg"
@@ -29,9 +33,12 @@ static bool     s_joined  = false;
 static uint16_t s_pan_id  = 0;
 static uint8_t  s_channel = 0;
 
-/* ── ZCL Attribute Handler (On/Off vom Coordinator gesetzt) ─────────────── */
+/* ── ZCL Attribute Handler ──────────────────────────────────────────────── */
 static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t id,
                                     const void *msg) {
+    if (id == ESP_ZB_CORE_OTA_UPGRADE_VALUE_CB_ID)
+        return zb_ota_client_handle(msg);
+
     if (id != ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID) return ESP_OK;
 
     const esp_zb_zcl_set_attr_value_message_t *m = msg;
@@ -123,9 +130,27 @@ static void zb_task(void *arg) {
     esp_zb_init(&cfg);
     esp_zb_set_tx_power(20);   /* max TX-Power: 20 dBm */
 
-    /* On/Off Server Endpoint */
-    esp_zb_on_off_light_cfg_t light_cfg = ESP_ZB_DEFAULT_ON_OFF_LIGHT_CONFIG();
-    esp_zb_ep_list_t *ep = esp_zb_on_off_light_ep_create(ZB_EP, &light_cfg);
+    /* Endpoint manuell aufbauen: Basic + Identify + On/Off-Server + OTA-Client */
+    esp_zb_cluster_list_t *cl = esp_zb_zcl_cluster_list_create();
+
+    esp_zb_basic_cluster_cfg_t basic_cfg = { .zcl_version = 3, .power_source = 0x03 };
+    esp_zb_cluster_list_add_basic_cluster(cl,
+        esp_zb_basic_cluster_create(&basic_cfg), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    esp_zb_identify_cluster_cfg_t id_cfg = { .identify_time = 0 };
+    esp_zb_cluster_list_add_identify_cluster(cl,
+        esp_zb_identify_cluster_create(&id_cfg), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    esp_zb_on_off_cluster_cfg_t on_off_cfg = { .on_off = false };
+    esp_zb_cluster_list_add_on_off_cluster(cl,
+        esp_zb_on_off_cluster_create(&on_off_cfg), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    esp_zb_cluster_list_add_ota_cluster(cl,
+        zb_ota_client_cluster_create(), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
+    esp_zb_ep_list_t *ep = esp_zb_ep_list_create();
+    esp_zb_ep_list_add_ep(ep, cl, ZB_EP,
+        ESP_ZB_AF_HA_PROFILE_ID, ESP_ZB_HA_ON_OFF_LIGHT_DEVICE_ID);
     esp_zb_device_register(ep);
 
     esp_zb_core_action_handler_register(zb_action_handler);

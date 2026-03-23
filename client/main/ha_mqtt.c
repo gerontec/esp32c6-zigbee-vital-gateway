@@ -98,6 +98,14 @@ void ha_mqtt_publish_attr(const char *cluster, const char *json_val) {
     emit(line);
 }
 
+void ha_mqtt_publish_ota_status(const char *status, uint32_t offset, uint32_t total) {
+    char line[128];
+    snprintf(line, sizeof(line),
+        "{\"t\":\"ota_progress\",\"status\":\"%s\",\"off\":%lu,\"total\":%lu}",
+        status, (unsigned long)offset, (unsigned long)total);
+    emit(line);
+}
+
 void ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t channel) {
     char line[96];
     snprintf(line, sizeof(line),

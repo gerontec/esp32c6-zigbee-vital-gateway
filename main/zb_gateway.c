@@ -8,7 +8,11 @@
 #include "nvs_flash.h"
 #include "nvs.h"
 #include "ha/esp_zigbee_ha_standard.h"
+#include "esp_zigbee_cluster.h"
+#include "esp_zigbee_attribute.h"
+#include "esp_zigbee_endpoint.h"
 #include "zb_gateway.h"
+#include "zb_ota_server.h"
 #include "ha_mqtt.h"
 #include "aps/esp_zigbee_aps.h"
 
@@ -52,6 +56,29 @@ static zb_device_t *find_or_add(uint16_t addr, const uint8_t *ieee) {
 /* ── ZCL-Attribut-Callback ──────────────────────────────────────────────── */
 static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
                                     const void *message) {
+    /* OTA Server: Bild-Query vom Client */
+    if (callback_id == ESP_ZB_CORE_OTA_UPGRADE_SRV_QUERY_IMAGE_CB_ID) {
+        const esp_zb_zcl_ota_upgrade_server_query_image_message_t *m = message;
+        if (m && m->table_idx) *m->table_idx = 0;
+        return ESP_OK;
+    }
+
+    /* OTA Server: Transfer-Status */
+    if (callback_id == ESP_ZB_CORE_OTA_UPGRADE_SRV_STATUS_CB_ID) {
+        const esp_zb_zcl_ota_upgrade_server_status_message_t *m = message;
+        if (!m) return ESP_OK;
+        const char *st =
+            m->server_status == ESP_ZB_ZCL_OTA_UPGRADE_SERVER_STARTED ? "started" :
+            m->server_status == ESP_ZB_ZCL_OTA_UPGRADE_SERVER_ABORTED ? "aborted" : "done";
+        char line[80];
+        snprintf(line, sizeof(line),
+                 "{\"t\":\"ota_srv_status\",\"addr\":\"0x%04x\",\"status\":\"%s\"}",
+                 m->zcl_addr.u.short_addr, st);
+        ha_mqtt_emit_raw(line);
+        ESP_LOGI(TAG, "OTA srv 0x%04x: %s", m->zcl_addr.u.short_addr, st);
+        return ESP_OK;
+    }
+
     if (callback_id != ESP_ZB_CORE_REPORT_ATTR_CB_ID &&
         callback_id != ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID)
         return ESP_OK;
@@ -233,8 +260,23 @@ static void zb_task(void *arg) {
     esp_zb_init(&cfg);
     esp_zb_set_tx_power(20);   /* max TX-Power: 20 dBm */
 
-    esp_zb_on_off_switch_cfg_t sw_cfg = ESP_ZB_DEFAULT_ON_OFF_SWITCH_CONFIG();
-    esp_zb_ep_list_t *ep = esp_zb_on_off_switch_ep_create(ZB_ENDPOINT, &sw_cfg);
+    /* Endpoint manuell aufbauen: Basic + Identify + OTA-Server */
+    esp_zb_cluster_list_t *cl = esp_zb_zcl_cluster_list_create();
+
+    esp_zb_basic_cluster_cfg_t basic_cfg = { .zcl_version = 3, .power_source = 0x01 };
+    esp_zb_cluster_list_add_basic_cluster(cl,
+        esp_zb_basic_cluster_create(&basic_cfg), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    esp_zb_identify_cluster_cfg_t id_cfg = { .identify_time = 0 };
+    esp_zb_cluster_list_add_identify_cluster(cl,
+        esp_zb_identify_cluster_create(&id_cfg), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    esp_zb_cluster_list_add_ota_cluster(cl,
+        zb_ota_server_cluster_create(), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
+    esp_zb_ep_list_t *ep = esp_zb_ep_list_create();
+    esp_zb_ep_list_add_ep(ep, cl, ZB_ENDPOINT,
+        ESP_ZB_AF_HA_PROFILE_ID, ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID);
     esp_zb_device_register(ep);
 
     esp_zb_core_action_handler_register(zb_action_handler);

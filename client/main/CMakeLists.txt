@@ -3,12 +3,14 @@ idf_component_register(
         "main.c"
         "ha_mqtt.c"
         "zb_device.c"
+        "zb_ota_client.c"
     INCLUDE_DIRS "."
     REQUIRES
         nvs_flash
         driver
         esp_timer
         espressif__esp-zigbee-lib
+        app_update
         freertos
         log
 )
