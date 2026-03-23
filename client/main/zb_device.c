@@ -12,6 +12,7 @@
 #include "ha/esp_zigbee_ha_standard.h"
 #include "nvs_flash.h"
 #include "nvs.h"
+#include "esp_ieee802154.h"
 #include "esp_partition.h"
 #include "esp_system.h"
 #include "esp_zigbee_cluster.h"
@@ -203,6 +204,7 @@ void zb_device_leave(void) {
 bool     zb_device_joined(void)  { return s_joined; }
 uint16_t zb_device_pan_id(void)  { return s_pan_id; }
 uint8_t  zb_device_channel(void) { return s_channel; }
+int8_t   zb_device_rssi(void)    { return esp_ieee802154_get_recent_rssi(); }
 
 void zb_device_set_channel(uint8_t ch) {
     if (ch < 11 || ch > 26) {

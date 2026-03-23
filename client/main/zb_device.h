@@ -21,3 +21,4 @@ void zb_device_set_channel(uint8_t ch);
 bool     zb_device_joined(void);
 uint16_t zb_device_pan_id(void);
 uint8_t  zb_device_channel(void);
+int8_t   zb_device_rssi(void);

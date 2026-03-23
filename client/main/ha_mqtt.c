@@ -106,10 +106,10 @@ void ha_mqtt_publish_ota_status(const char *status, uint32_t offset, uint32_t to
     emit(line);
 }
 
-void ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t channel) {
-    char line[96];
+void ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t channel, int8_t rssi) {
+    char line[112];
     snprintf(line, sizeof(line),
-        "{\"t\":\"heartbeat\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u}",
-        (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel);
+        "{\"t\":\"heartbeat\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d}",
+        (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi);
     emit(line);
 }

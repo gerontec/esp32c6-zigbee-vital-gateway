@@ -32,7 +32,7 @@ static void heartbeat_task(void *arg) {
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_MS));
         uint32_t up = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-        ha_mqtt_publish_heartbeat(up, zb_device_pan_id(), zb_device_channel());
+        ha_mqtt_publish_heartbeat(up, zb_device_pan_id(), zb_device_channel(), zb_device_rssi());
     }
 }
 
