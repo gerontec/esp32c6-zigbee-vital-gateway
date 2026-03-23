@@ -64,9 +64,14 @@ case "$PROFILE" in
         BINARY="build/esp32c6_matter_vital_gateway.bin"
         PROFILE_LABEL="Matter over Thread Vital Sensor"
         ;;
+    client)
+        BUILD_DIR="$SCRIPT_DIR/client"
+        BINARY="build/zigbee-client.bin"
+        PROFILE_LABEL="Zigbee Router Client"
+        ;;
     *)
         echo "Unbekanntes Profil: $PROFILE"
-        echo "Gültig: zigbee | rcp | matter"
+        echo "Gültig: zigbee | rcp | matter | client"
         exit 1
         ;;
 esac

@@ -121,6 +121,7 @@ static void zb_task(void *arg) {
         .nwk_cfg.zczr_cfg   = { .max_children = 10 },
     };
     esp_zb_init(&cfg);
+    esp_zb_set_tx_power(20);   /* max TX-Power: 20 dBm */
 
     /* On/Off Server Endpoint */
     esp_zb_on_off_light_cfg_t light_cfg = ESP_ZB_DEFAULT_ON_OFF_LIGHT_CONFIG();
