@@ -321,8 +321,7 @@ def dispatch(line: str):
                     "ieee": ieee, "name": addr, "last_seen": "", "clusters": {}
                 })
                 dev["ieee"] = ieee
-                val = _extract_value(sub, p)
-                dev["clusters"][sub] = val if val is not None else json.dumps(p)
+                dev["clusters"][sub] = p
                 dev["last_seen"] = _now()
 
     elif t == "heartbeat":
@@ -378,7 +377,7 @@ def _html():
     dev_rows = ""
     for addr, d in s["devices"].items():
         clusters = " &nbsp;|&nbsp; ".join(
-            f"<b>{k}</b>: {v}" for k, v in d["clusters"].items()
+            f"<b>{k}</b>: {json.dumps(v) if isinstance(v, dict) else v}" for k, v in d["clusters"].items()
         )
         lqi = d.get("lqi", "–")
         lqi_bar = f'<meter value="{lqi}" min="0" max="255" style="width:60px"></meter> {lqi}' if isinstance(lqi, int) else "–"
@@ -479,8 +478,11 @@ class _Handler(BaseHTTPRequestHandler):
         self.end_headers()
 
 
+class _ReuseHTTPServer(HTTPServer):
+    allow_reuse_address = True
+
 def _run_web():
-    srv = HTTPServer(("0.0.0.0", WEB_PORT), _Handler)
+    srv = _ReuseHTTPServer(("0.0.0.0", WEB_PORT), _Handler)
     print(f"[Web] Dashboard → http://0.0.0.0:{WEB_PORT}/")
     srv.serve_forever()
 
