@@ -1,5 +1,6 @@
 dependencies:
   espressif/esp-zboss-lib: "1.0.9"
   espressif/esp-zigbee-lib: "1.0.9"
+  espressif/onewire_bus: ">=1.0.0"
   idf:
     version: ">=5.2.0"

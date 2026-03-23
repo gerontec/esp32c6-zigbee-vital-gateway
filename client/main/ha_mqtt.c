@@ -106,10 +106,16 @@ void ha_mqtt_publish_ota_status(const char *status, uint32_t offset, uint32_t to
     emit(line);
 }
 
-void ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t channel, int8_t rssi) {
-    char line[112];
-    snprintf(line, sizeof(line),
-        "{\"t\":\"heartbeat\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d}",
-        (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi);
+void ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t channel, int8_t rssi, float temp_c) {
+    char line[128];
+    if (temp_c <= -126.0f) {
+        snprintf(line, sizeof(line),
+            "{\"t\":\"heartbeat\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d,\"temp\":null}",
+            (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi);
+    } else {
+        snprintf(line, sizeof(line),
+            "{\"t\":\"heartbeat\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d,\"temp\":%.2f}",
+            (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi, (double)temp_c);
+    }
     emit(line);
 }
