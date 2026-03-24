@@ -25,3 +25,6 @@ void zb_gateway_scan_channels(void);
 /* LQI aller bekannten Devices als JSON-Array in buf schreiben */
 void zb_gateway_lqi_json(char *buf, size_t len);
 int8_t zb_gateway_get_last_rssi(void);
+
+/* switch2wifi-Befehl via Zigbee an alle gepairten Devices senden */
+void zb_gateway_send_switch2wifi_all(void);

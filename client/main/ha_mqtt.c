@@ -126,3 +126,11 @@ void ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t chann
     }
     emit(line);
 }
+
+void ha_mqtt_emit_raw(const char *line) {
+    xSemaphoreTake(s_tx_mtx, portMAX_DELAY);
+    fputs(line, stdout);
+    fputc('\n', stdout);
+    fflush(stdout);
+    xSemaphoreGive(s_tx_mtx);
+}

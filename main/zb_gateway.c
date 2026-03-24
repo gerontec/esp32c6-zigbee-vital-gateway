@@ -292,6 +292,10 @@ static void zb_task(void *arg) {
         esp_zb_on_off_cluster_create(&on_off_cfg),
         ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
 
+    /* Custom Cluster 0xFF01: switch2wifi-Befehl an Client (CLIENT-Role) */
+    esp_zb_attribute_list_t *sw_attr = esp_zb_zcl_attr_list_create(0xFF01);
+    esp_zb_cluster_list_add_custom_cluster(cl, sw_attr, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
     esp_zb_ep_list_t *ep = esp_zb_ep_list_create();
     esp_zb_ep_list_add_ep(ep, cl, ZB_ENDPOINT,
         ESP_ZB_AF_HA_PROFILE_ID, ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID);
@@ -495,4 +499,44 @@ void zb_gateway_scan_channels(void) {
     }
     if (!s_scan_sem) s_scan_sem = xSemaphoreCreateBinary();
     xTaskCreate(scan_task, "chan_scan", 4096, NULL, 2, &s_scan_task_h);
+}
+
+
+/* ── switch2wifi-Befehl an alle bekannten Devices senden ────────────────── */
+#define SW2WIFI_CLUSTER  0xFF01
+#define SW2WIFI_CMD_ID   0x01
+
+static void send_switch2wifi_cb(uint8_t param) {
+    (void)param;
+    xSemaphoreTake(s_dev_mutex, portMAX_DELAY);
+    int sent = 0;
+    for (int i = 0; i < MAX_DEVICES; i++) {
+        if (!s_devices[i].used) continue;
+        esp_zb_zcl_custom_cluster_cmd_req_t req = {
+            .zcl_basic_cmd = {
+                .dst_addr_u  = { .addr_short = s_devices[i].short_addr },
+                .dst_endpoint = 1,
+                .src_endpoint = ZB_ENDPOINT,
+            },
+            .address_mode  = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
+            .profile_id    = ESP_ZB_AF_HA_PROFILE_ID,
+            .cluster_id    = SW2WIFI_CLUSTER,
+            .custom_cmd_id = SW2WIFI_CMD_ID,
+            .direction     = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+            .data          = { .type = ESP_ZB_ZCL_ATTR_TYPE_NULL, .size = 0, .value = NULL },
+        };
+        esp_zb_zcl_custom_cluster_cmd_req(&req);
+        char line[80];
+        snprintf(line, sizeof(line),
+                 "{\"t\":\"switch2wifi_cmd\",\"dst\":\"0x%04x\"}", s_devices[i].short_addr);
+        ha_mqtt_emit_raw(line);
+        sent++;
+    }
+    xSemaphoreGive(s_dev_mutex);
+    if (sent == 0)
+        ha_mqtt_emit_raw("{\"t\":\"switch2wifi_cmd\",\"error\":\"no_devices\"}");
+}
+
+void zb_gateway_send_switch2wifi_all(void) {
+    esp_zb_scheduler_alarm(send_switch2wifi_cb, 0, 0);
 }

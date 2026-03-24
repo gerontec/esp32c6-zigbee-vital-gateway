@@ -21,6 +21,7 @@
 #include "zb_device.h"
 #include "zb_ota_client.h"
 #include "ha_mqtt.h"
+#include "wifi_switch.h"
 
 #define ZB_NVS_NAMESPACE "zb_cfg"
 #define ZB_NVS_KEY_CH    "channel"
@@ -45,6 +46,13 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t id,
     if (id == ESP_ZB_CORE_OTA_UPGRADE_VALUE_CB_ID)
         return zb_ota_client_handle(msg);
 
+    if (id == ESP_ZB_CORE_CMD_CUSTOM_CLUSTER_REQ_CB_ID) {
+        const esp_zb_zcl_custom_cluster_command_message_t *m = msg;
+        if (m && m->info.cluster == 0xFF01 && m->info.command.id == 0x01) {
+            zb_device_switch2wifi_request();
+        }
+        return ESP_OK;
+    }
     if (id != ESP_ZB_CORE_SET_ATTR_VALUE_CB_ID) return ESP_OK;
 
     const esp_zb_zcl_set_attr_value_message_t *m = msg;
@@ -162,6 +170,10 @@ static void zb_task(void *arg) {
     esp_zb_cluster_list_add_temperature_meas_cluster(cl,
         esp_zb_temperature_meas_cluster_create(&temp_cfg), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
+    /* Custom cluster 0xFF01: switch2wifi command (SERVER) */
+    esp_zb_attribute_list_t *sw_attr = esp_zb_zcl_attr_list_create(0xFF01);
+    esp_zb_cluster_list_add_custom_cluster(cl, sw_attr, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
     esp_zb_cluster_list_add_ota_cluster(cl,
         zb_ota_client_cluster_create(), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
 
@@ -278,4 +290,9 @@ void zb_device_set_channel(uint8_t ch) {
     ESP_LOGI(TAG, "Neustart für Kanalwechsel auf %d...", ch);
     vTaskDelay(pdMS_TO_TICKS(200));
     esp_restart();
+}
+
+/* switch2wifi: NVS-Flag setzen + Neustart (aus Zigbee-Action-Handler) */
+void zb_device_switch2wifi_request(void) {
+    wifi_switch_trigger();
 }

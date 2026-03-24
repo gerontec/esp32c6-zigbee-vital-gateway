@@ -43,6 +43,9 @@ static void on_uart_cmd(const char *cmd, const char *payload, int len) {
     } else if (strcmp(cmd, "ota_data") == 0) {
         /* payload = hex string, len = byte count */
         zb_ota_server_feed_data(payload, (uint8_t)len);
+    } else if (strcmp(cmd, "switch2wifi") == 0) {
+        ESP_LOGI(TAG, "switch2wifi -> ZCL an alle Devices");
+        zb_gateway_send_switch2wifi_all();
     }
 }
 

@@ -260,6 +260,10 @@ def on_message(client, userdata, msg):
         uart_msg = json.dumps({"cmd": "scan_chan"}) + "\n"
         ser.write(uart_msg.encode())
         print(f"[→C6] {uart_msg.strip()}")
+    elif cmd == "switch2wifi":
+        uart_msg = json.dumps({"cmd": "switch2wifi"}) + "\n"
+        ser.write(uart_msg.encode())
+        print(f"[→C6] {uart_msg.strip()}")
 
 mq.on_connect = on_connect
 mq.on_message = on_message

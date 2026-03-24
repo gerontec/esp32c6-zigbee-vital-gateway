@@ -1,6 +1,7 @@
 idf_component_register(
     SRCS
         "main.c"
+        "wifi_switch.c"
         "ha_mqtt.c"
         "zb_device.c"
         "zb_ota_client.c"
@@ -15,4 +16,7 @@ idf_component_register(
         log
         ieee802154
         espressif__onewire_bus
+        esp_wifi
+        esp_netif
+        esp_event
 )

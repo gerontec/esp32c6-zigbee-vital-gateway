@@ -8,6 +8,7 @@
 #include "esp_zigbee_core.h"
 #include "ha_mqtt.h"
 #include "zb_device.h"
+#include "wifi_switch.h"
 #include "onewire_bus.h"
 #include "onewire_cmd.h"
 #include "onewire_device.h"
@@ -131,6 +132,11 @@ void app_main(void) {
     ha_mqtt_publish_boot();
 
     temp_sensor_init();
+
+    /* WiFi-Modus falls NVS-Flag gesetzt (Befehl vom Coordinator) */
+    if (wifi_switch_is_pending()) {
+        wifi_switch_run();  /* blockiert bis esp_restart() */
+    }
     zb_device_start();
 
     xTaskCreate(btn_task,       "btn",       2048, NULL, 3, NULL);
