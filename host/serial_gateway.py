@@ -682,6 +682,12 @@ def _device_html(addr):
                   padding:.25em;width:80px"> Sekunden
     <button type="submit">Setzen</button>
   </form>
+  <h3 style="color:#7ecbff;margin-top:1em">OTA Firmware-Update</h3>
+  <form method="POST" action="/api/ota">
+    <input name="path" value="" placeholder="leer = client/build/zigbee-client.bin" size="50"
+           style="background:#2a2a4a;color:#e0e0e0;border:1px solid #555;padding:.25em .4em">
+    <button type="submit">&#x2B06; OTA starten</button>
+  </form>
 </section>
 <footer style="margin-top:2em;color:#666;font-size:.85em">
   Auto-Refresh 15 s &nbsp;|&nbsp; <a href="/api/state">JSON State</a>
