@@ -24,3 +24,4 @@ uint8_t  zb_device_channel(void);
 int8_t   zb_device_rssi(void);
 void     zb_device_report_temp(int16_t temp_100);
 void     zb_device_switch2wifi_request(void);
+void     zb_device_set_sleep(uint32_t seconds);

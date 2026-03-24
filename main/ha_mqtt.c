@@ -60,6 +60,11 @@ static void rx_task(void *arg) {
             s_cmd_cb("scan_chan", "", 0);
         } else if (strstr(buf, "switch2wifi")) {
             s_cmd_cb("switch2wifi", "", 0);
+        } else if (strstr(buf, "set_sleep")) {
+            char *p = strstr(buf, "\"s\":");
+            char val[16] = "600";
+            if (p) snprintf(val, sizeof(val), "%d", atoi(p + 4));
+            s_cmd_cb("set_sleep", val, strlen(val));
         } else if (strstr(buf, "ota_start")) {
             char *ps = strstr(buf, "\"size\":");
             char *pv = strstr(buf, "\"ver\":");

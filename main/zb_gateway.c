@@ -574,3 +574,40 @@ static void send_switch2wifi_cb(uint8_t param) {
 void zb_gateway_send_switch2wifi_all(void) {
     esp_zb_scheduler_alarm(send_switch2wifi_cb, 0, 0);
 }
+
+/* ── set_sleep-Befehl an alle Devices senden ────────────────────────────── */
+static uint32_t s_sleep_pending_s = 600;
+
+static void send_set_sleep_cb(uint8_t param) {
+    (void)param;
+    xSemaphoreTake(s_dev_mutex, portMAX_DELAY);
+    for (int i = 0; i < MAX_DEVICES; i++) {
+        if (!s_devices[i].used) continue;
+        esp_zb_zcl_custom_cluster_cmd_req_t req = {
+            .zcl_basic_cmd = {
+                .dst_addr_u  = { .addr_short = s_devices[i].short_addr },
+                .dst_endpoint = 1,
+                .src_endpoint = ZB_ENDPOINT,
+            },
+            .address_mode  = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
+            .profile_id    = ESP_ZB_AF_HA_PROFILE_ID,
+            .cluster_id    = 0xFF01,
+            .custom_cmd_id = 0x02,
+            .direction     = ESP_ZB_ZCL_CMD_DIRECTION_TO_SRV,
+            .data          = { .type = ESP_ZB_ZCL_ATTR_TYPE_U32,
+                               .size = 4, .value = &s_sleep_pending_s },
+        };
+        esp_zb_zcl_custom_cluster_cmd_req(&req);
+        char line[80];
+        snprintf(line, sizeof(line),
+                 "{\"t\":\"set_sleep_cmd\",\"dst\":\"0x%04x\",\"s\":%lu}",
+                 s_devices[i].short_addr, (unsigned long)s_sleep_pending_s);
+        ha_mqtt_emit_raw(line);
+    }
+    xSemaphoreGive(s_dev_mutex);
+}
+
+void zb_gateway_send_set_sleep(uint32_t seconds) {
+    s_sleep_pending_s = seconds;
+    esp_zb_scheduler_alarm(send_set_sleep_cb, 0, 0);
+}

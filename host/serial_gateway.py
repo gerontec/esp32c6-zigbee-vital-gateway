@@ -264,6 +264,14 @@ def on_message(client, userdata, msg):
         uart_msg = json.dumps({"cmd": "switch2wifi"}) + "\n"
         ser.write(uart_msg.encode())
         print(f"[→C6] {uart_msg.strip()}")
+    elif cmd == "set_sleep":
+        try:
+            secs = max(10, int(payload))
+            uart_msg = json.dumps({"cmd": "set_sleep", "s": secs}) + "\n"
+            ser.write(uart_msg.encode())
+            print(f"[→C6] {uart_msg.strip()}")
+        except ValueError:
+            print(f"[WARN] set_sleep: ungültiger Wert {payload}")
 
 mq.on_connect = on_connect
 mq.on_message = on_message
@@ -665,6 +673,14 @@ def _device_html(addr):
       <option value="leave">leave</option>
     </select>
     <button type="submit">Senden</button>
+  </form>
+  <h3 style="color:#7ecbff;margin-top:1em">Sleep-Intervall</h3>
+  <form method="POST" action="/api/sleep">
+    <input name="addr" type="hidden" value="{addr}">
+    <input name="secs" type="number" value="600" min="10" max="86400"
+           style="background:#2a2a4a;color:#e0e0e0;border:1px solid #555;
+                  padding:.25em;width:80px"> Sekunden
+    <button type="submit">Setzen</button>
   </form>
 </section>
 <footer style="margin-top:2em;color:#666;font-size:.85em">

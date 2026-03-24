@@ -1,236 +1,235 @@
 # ESP32-C6 Zigbee Vital Signs Gateway
 
-Two firmware variants for the same ESP32-C6 DevKit + Seeed MR60BHA2 radar hardware.
-
-| Variant | Transport | Controller | Docs |
-|---|---|---|---|
-| **Zigbee** (this README) | WiFi + MQTT | Home Assistant | below |
-| **Matter over Thread** | Thread 802.15.4 | Apple Home, Google Home, chip-tool | [matter/matter.md](matter/matter.md) |
+Split-architecture Zigbee gateway: **ESP32-C6** acts as Zigbee coordinator (USB-serial to Raspberry Pi), **Raspberry Pi** runs `serial_gateway.py` bridging to MQTT and providing the Web UI.
 
 ```
-MR60BHA2 ──UART──► ESP32-C6 ──WiFi/MQTT──► Home Assistant      (Zigbee variant)
-Zigbee devices ──802.15.4──► ESP32-C6
-                                 │
-                            HTTP :80 (device mapping UI)
-
-MR60BHA2 ──UART──► ESP32-C6 ──Thread (802.15.4)──► Border Router ──► Matter Controller  (Matter variant)
+Zigbee devices ──802.15.4──► ESP32-C6 (coordinator)
+                                   │  USB/UART
+                              Raspberry Pi
+                              serial_gateway.py
+                                   │
+                          MQTT Broker (Mosquitto)
+                                   │
+                          Home Assistant / any MQTT client
+                          Web UI :8082
 ```
-
-## Features
-
-| Feature | Details |
-|---|---|
-| Zigbee coordinator | Native 802.15.4 radio on ESP32-C6, no USB dongle needed |
-| Vital signs radar | Seeed MR60BHA2 – heartbeat & breathing rate at up to 1.5 m |
-| MQTT bridge | All Zigbee sensor data → HA via MQTT, including auto-discovery |
-| Web UI | Device mapping on port 80 – assign friendly names, open permit-join |
-| REST API | `/api/devices`, `/api/vitals`, `POST /api/device` |
-
----
 
 ## Hardware
 
 | Component | Notes |
 |---|---|
-| ESP32-C6 DevKit | Any board with exposed UART1 pins |
-| Seeed MR60BHA2 | 60 GHz mmWave radar, 3.3 V UART, 5 V supply via VIN |
-| Boot button | Already on most DevKits (GPIO9) – triggers permit-join |
+| ESP32-C6 DevKit | Zigbee coordinator (USB to Pi) |
+| Seeed MR60BHA2 | 60 GHz mmWave radar, UART1, optional |
+| Raspberry Pi 3/4/5 | Runs serial_gateway.py as systemd service |
 
-### Wiring (MR60BHA2 → ESP32-C6)
+### Wiring (MR60BHA2 → ESP32-C6, optional)
 
-| MR60BHA2 pin | ESP32-C6 pin |
+| MR60BHA2 | ESP32-C6 |
 |---|---|
 | TX | GPIO 5 (RX1) |
 | RX | GPIO 4 (TX1) |
 | GND | GND |
-| 5V | 5V / VIN |
+| 5V | VIN |
 
 ---
 
-## Prerequisites
+## Quick Start
 
-- [ESP-IDF 5.2+](https://docs.espressif.com/projects/esp-idf/en/stable/esp32c6/get-started/)
-- Python 3 (comes with ESP-IDF)
-- A running MQTT broker reachable from the ESP32-C6 (e.g. Mosquitto inside Home Assistant)
+### 1. Build & Flash Coordinator
 
 ```bash
-# Install / activate ESP-IDF (adjust path to your installation)
-. ~/esp/esp-idf/export.sh
-```
-
----
-
-## Configuration
-
-Open `main/main.c` and edit the constants at the top:
-
-```c
-#define WIFI_SSID        "YourNetwork"
-#define WIFI_PASSWORD    "YourPassword"
-#define MQTT_BROKER_URI  "mqtt://192.168.1.10"   // IP of your HA MQTT broker
-#define MQTT_USER        NULL                     // or "username"
-#define MQTT_PASS        NULL                     // or "password"
-
-// MR60BHA2 UART pins
-#define MR60_UART        UART_NUM_1
-#define MR60_TX_PIN      4    // ESP TX → radar RX
-#define MR60_RX_PIN      5    // ESP RX ← radar TX
-
-// Permit-join button (Boot button on most DevKits)
-#define BTN_PERMIT_JOIN  9
-```
-
----
-
-## Build & Flash
-
-```bash
-# Set target
-idf.py set-target esp32c6
-
-# Build
+source ~/esp-idf/export.sh
+cd esp32c6-zigbee-vital-gateway
 idf.py build
-
-# Flash (adjust port)
-idf.py -p /dev/ttyUSB0 flash monitor
+idf.py -p /dev/ttyUSB0 flash
 ```
 
-The first build will automatically fetch the Zigbee SDK components via the IDF component manager (`main/idf_component.yml`).
+### 2. Build & Flash Client (optional sensor node)
 
----
+```bash
+source ~/esp-idf/export.sh
+cd esp32c6-zigbee-vital-gateway/client
+idf.py build
+idf.py -p /dev/ttyUSB0 flash
+```
 
-## First Boot
+### 3. Start serial_gateway.py on Raspberry Pi
 
-1. The Zigbee coordinator starts and **forms a new network** (factory new).
-2. Network steering begins immediately – devices can join.
-3. The MQTT client connects and publishes `online` to `vital-gw-XXXXXXXX/status`.
-4. The web UI is available at `http://<device-ip>/`.
+```bash
+python3 host/serial_gateway.py \
+  --port /dev/ttyUSB0 \
+  --broker 192.168.178.1 \
+  --base gw/coordinator
+```
 
-> The device IP is logged on boot:
-> ```
-> I (1234) main: IP: 192.168.1.42
-> ```
+Or use the included systemd service:
 
----
+```bash
+sudo cp esp32gw.service /etc/systemd/system/
+sudo systemctl enable --now esp32gw.service
+```
 
-## Pairing Zigbee Devices
-
-**Option A – Boot button**
-Press the Boot button (GPIO9) on the DevKit. Permit-join opens for 180 seconds.
-
-**Option B – Web UI**
-Open `http://<device-ip>/` and click **"180 s öffnen"** in the Permit Join section.
-
-**Option C – MQTT**
-Publish to `vital-gw-XXXXXXXX/permit_join` (the status topic accepts open/close events).
-
-Once a device joins, it appears in the web UI and its sensor data is forwarded to MQTT automatically.
+Web UI: `http://<pi-ip>:8082/`
 
 ---
 
 ## MQTT Topics
 
-All topics are prefixed with `vital-gw-<MAC4>` (last 4 bytes of the WiFi MAC, e.g. `vital-gw-a1b2c3d4`).
+Base topic default: `gw/coordinator` (configurable via `--base`)
 
-| Topic | Direction | Content |
+### Published by Gateway
+
+| Topic | Content | Notes |
 |---|---|---|
-| `vital-gw-XXXX/status` | pub | `online` / `offline` (LWT) |
-| `vital-gw-XXXX/mr60bha1` | pub | Vital signs JSON (see below) |
-| `vital-gw-XXXX/zigbee/0xADDR/on_off` | pub | `{"state":"ON"}` |
-| `vital-gw-XXXX/zigbee/0xADDR/temperature` | pub | `{"temperature":21.50}` |
-| `vital-gw-XXXX/zigbee/0xADDR/humidity` | pub | `{"humidity":55.00}` |
-| `vital-gw-XXXX/zigbee/0xADDR/illuminance` | pub | `{"lux":320}` |
-| `vital-gw-XXXX/zigbee/0xADDR/occupancy` | pub | `{"occupancy":true}` |
-| `vital-gw-XXXX/zigbee/0xADDR/raw` | pub | Unknown clusters as raw JSON |
-| `vital-gw-XXXX/zigbee/0xADDR/status` | pub | `{"event":"joined","addr":"0x1234"}` |
-| `vital-gw-XXXX/permit_join` | pub | `{"open":true,"seconds":180}` |
+| `gw/coordinator/status` | `online` / `offline` | LWT, retained |
+| `gw/coordinator/heartbeat` | `{"t":"heartbeat","uptime":…}` | Retained, every ~10 min |
+| `gw/coordinator/console` | raw UART log line | Debug |
+| `gw/coordinator/zigbee/0xADDR/temperature` | `{"temperature":21.50}` | °C |
+| `gw/coordinator/zigbee/0xADDR/humidity` | `{"humidity":55.00}` | % RH |
+| `gw/coordinator/zigbee/0xADDR/illuminance` | `{"lux":320.5}` | lux |
+| `gw/coordinator/zigbee/0xADDR/occupancy` | `{"occupancy":true}` | PIR / radar |
+| `gw/coordinator/zigbee/0xADDR/ias_zone` | `{"zone_status":1,"motion":1}` | IAS Zone sensors |
+| `gw/coordinator/zigbee/0xADDR/battery` | `{"pct":85}` | Battery % |
+| `gw/coordinator/zigbee/0xADDR/on_off` | `{"state":"ON"}` | On/Off cluster |
+| `gw/coordinator/zigbee/0xADDR/raw` | raw JSON | Unknown clusters |
+| `gw/coordinator/zigbee/0xADDR/status` | `{"event":"joined"}` | Join/leave events |
+| `gw/coordinator/mr60bha2` | `{"bpm":72,"rpm":16,…}` | Radar vital signs |
+| `gw/coordinator/permit_join` | `{"open":true,"seconds":180}` | Network state |
 
-### Vital signs payload (`mr60bha1`)
+### Command Topics (publish to these)
 
-```json
-{
-  "bpm": 72,
-  "rpm": 16,
-  "bpm_category": "normal",
-  "rpm_category": "normal",
-  "status": "messung",
-  "bpm_wave": 0.85,
-  "rpm_wave": 0.42
-}
+| Topic | Payload | Action |
+|---|---|---|
+| `gw/coordinator/cmd/permit_join` | `180` (seconds, integer) | Open Zigbee network for joining |
+| `gw/coordinator/cmd/set_channel` | `20` (channel 11–26) | Change Zigbee channel (coordinator restarts) |
+| `gw/coordinator/cmd/scan_chan` | *(empty)* | Scan all channels, report energy |
+| `gw/coordinator/cmd/switch2wifi` | *(empty)* | Send switch2wifi to **all** connected client nodes |
+| `gw/coordinator/cmd/set_sleep` | `600` (seconds, min 10) | Set heartbeat/sleep interval on all client nodes |
+
+#### Examples
+
+```bash
+MQTT_BASE="gw/coordinator"
+BROKER="192.168.178.1"
+
+# Open network for 3 minutes
+mosquitto_pub -h $BROKER -t "$MQTT_BASE/cmd/permit_join" -m 180
+
+# Set Zigbee channel 25 (avoids 2.4 GHz WiFi ch 1,6,11)
+mosquitto_pub -h $BROKER -t "$MQTT_BASE/cmd/set_channel" -m 25
+
+# Scan channel energy
+mosquitto_pub -h $BROKER -t "$MQTT_BASE/cmd/scan_chan" -m ""
+
+# Tell all client nodes to try WiFi (fallback to Zigbee after 60 s)
+mosquitto_pub -h $BROKER -t "$MQTT_BASE/cmd/switch2wifi" -m ""
+
+# Change client sleep cycle to 5 minutes (300 s)
+mosquitto_pub -h $BROKER -t "$MQTT_BASE/cmd/set_sleep" -m 300
 ```
-
----
-
-## Home Assistant Auto-Discovery
-
-The following entities are registered automatically when the first vital-sign frame arrives:
-
-| Entity | Unit |
-|---|---|
-| Heart Rate | BPM |
-| Breathing Rate | /min |
-| Heart Rate Category | – |
-| Breathing Category | – |
-| Radar Status | – |
-
-Zigbee device entities must be added manually in HA using the MQTT topics above, or you can use the existing MQTT integration with manual sensor definitions.
 
 ---
 
 ## Web UI
 
-Open `http://<device-ip>/` in a browser.
+Open `http://<pi-ip>:8082/` in a browser.
 
-![Web UI sections]
+| Page | URL | Description |
+|---|---|---|
+| Overview | `/` | All devices, latest values, permit-join button |
+| Device detail | `/device/0xADDR` | All clusters, last payloads, command buttons, sleep form |
 
-| Section | Description |
-|---|---|
-| Vital Values | Live heart rate, breathing rate and radar/MQTT connection status |
-| Zigbee Devices | Table of all paired devices with editable friendly names |
-| Permit Join | Open (180 s) or close the Zigbee network for new devices |
+### Web UI Commands (per device)
+
+- **switch2wifi** – trigger WiFi switch on that device
+- **leave** – remove device from Zigbee network
+- **Sleep-Intervall** – set heartbeat interval (seconds) via POST `/api/sleep`
 
 ### REST API
 
 ```bash
-# List all paired Zigbee devices
-curl http://192.168.1.42/api/devices
+PI="192.168.178.218:8082"
 
-# Get current vital sign readings
-curl http://192.168.1.42/api/vitals
+# Open permit-join for 180 s (Web UI button)
+curl -X POST http://$PI/api/permit_join -d "sec=180"
 
-# Rename a device (addr in hex, name URL-encoded)
-curl -X POST http://192.168.1.42/api/device \
-  -d "addr=0x1234&name=Living+Room&idx=0"
+# Send command to a specific device
+curl -X POST http://$PI/api/device/0x1234/cmd -d "cmd=switch2wifi"
+curl -X POST http://$PI/api/device/0x1234/cmd -d "cmd=leave"
+
+# Set sleep interval for all clients (broadcasts via MQTT → coordinator → ZCL)
+curl -X POST http://$PI/api/sleep -d "secs=600"
 ```
 
 ---
 
-## Supported Zigbee Clusters
+## Supported Zigbee Clusters (CLIENT on coordinator)
 
-| ZCL Cluster | Cluster ID | MQTT subtopic |
+| Cluster | ID | MQTT subtopic |
 |---|---|---|
 | On/Off | 0x0006 | `on_off` |
 | Temperature Measurement | 0x0402 | `temperature` |
 | Relative Humidity | 0x0405 | `humidity` |
 | Illuminance Measurement | 0x0400 | `illuminance` |
 | Occupancy Sensing | 0x0406 | `occupancy` |
-| Any other | – | `raw` |
+| IAS Zone | 0x0500 | `ias_zone` |
+| Power Configuration | 0x0001 | `battery` |
+| Custom (0xFF01) | 0xFF01 | – (commands only) |
+
+---
+
+## Client Firmware (ESP32-C6 Sensor Node)
+
+The `client/` subdirectory contains firmware for standalone ESP32-C6 nodes that:
+- Join the Zigbee network and report temperature via ZCL
+- Receive ZCL custom commands on cluster 0xFF01:
+  - `cmd 0x01` – switch to WiFi mode (scans open APs, connects, timeout 60 s, then restarts into Zigbee)
+  - `cmd 0x02` – set sleep/heartbeat interval (uint32 seconds, persisted in NVS)
+- Store sleep interval in NVS (`client_cfg` / `sleep_s`), survives reboot
+
+### Client Sleep Interval
+
+Default: **600 seconds** (10 minutes). Minimum: 10 s. Set via:
+
+```bash
+# Via MQTT (broadcasts to all clients)
+mosquitto_pub -h 192.168.178.1 -t "gw/coordinator/cmd/set_sleep" -m 300
+
+# Via Web UI: device detail page → Sleep-Intervall form
+```
+
+---
+
+## Channel Recommendations
+
+| Zigbee Channel | Center Freq | Avoids WiFi |
+|---|---|---|
+| **15** | 2425 MHz | WLAN 1, 6 |
+| **20** | 2450 MHz | WLAN 1, 6, 11 (partial) |
+| **25** | 2475 MHz | WLAN 1, 6, 11 ✓ |
+
+Default network channel: **20**. Tuya devices prefer 11, 15, 20, 25.
 
 ---
 
 ## Project Structure
 
 ```
-zigbee-vital-sensor/
-├── CMakeLists.txt              # IDF project, target esp32c6
-├── sdkconfig.defaults          # Zigbee coordinator + HTTPD config
-└── main/
-    ├── idf_component.yml       # Zigbee SDK dependencies
-    ├── main.c                  # app_main: WiFi → MQTT → radar → Zigbee → web
-    ├── mr60bha1.h / .c         # MR60BHA2 UART driver (FreeRTOS task)
-    ├── ha_mqtt.h / .c          # MQTT client + HA auto-discovery
-    ├── zb_gateway.h / .c       # Zigbee coordinator, ZCL dispatch
-    └── web_server.h / .c       # HTTP server on port 80
+esp32c6-zigbee-vital-gateway/
+├── main/                       # Coordinator firmware (ESP32-C6)
+│   ├── main.c                  # app_main, UART cmd dispatcher
+│   ├── zb_gateway.c/.h         # Zigbee coordinator, ZCL dispatch, ZCL custom cmds
+│   ├── ha_mqtt.c/.h            # UART→MQTT bridge, command parser
+│   ├── mr60bha2.c/.h           # MR60BHA2 radar driver
+│   └── zb_ota_server.c/.h      # OTA server
+├── client/main/                # Sensor node firmware (ESP32-C6)
+│   ├── main.c                  # app_main, heartbeat task, NVS sleep interval
+│   ├── zb_device.c/.h          # Zigbee end-device, ZCL custom cmd handler
+│   ├── ha_mqtt.c/.h            # UART emit helpers
+│   ├── wifi_switch.c/.h        # WiFi scan + connect, 60 s timeout, restart
+│   └── zb_ota_client.c/.h      # OTA client
+└── host/
+    └── serial_gateway.py       # Pi bridge: UART↔MQTT, Web UI :8082, MariaDB
 ```
 
 ---

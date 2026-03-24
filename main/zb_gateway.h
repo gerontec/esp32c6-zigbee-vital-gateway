@@ -28,3 +28,4 @@ int8_t zb_gateway_get_last_rssi(void);
 
 /* switch2wifi-Befehl via Zigbee an alle gepairten Devices senden */
 void zb_gateway_send_switch2wifi_all(void);
+void zb_gateway_send_set_sleep(uint32_t seconds);

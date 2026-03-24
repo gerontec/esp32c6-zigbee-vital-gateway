@@ -35,7 +35,7 @@ static bool      s_joined      = false;
 static uint16_t  s_pan_id      = 0;
 static uint8_t   s_channel     = 0;
 static volatile int16_t s_temp_pending = (int16_t)0x8000;
-#define TEMP_REPORT_MS 65000
+static volatile uint32_t s_temp_report_ms = 605000UL;  /* 605 s default */
 
 /* Vorwärtsdeklaration */
 static void temp_report_periodic(uint8_t param);   /* 65 s – kurz nach dem 60s-Heartbeat */
@@ -48,8 +48,13 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t id,
 
     if (id == ESP_ZB_CORE_CMD_CUSTOM_CLUSTER_REQ_CB_ID) {
         const esp_zb_zcl_custom_cluster_command_message_t *m = msg;
-        if (m && m->info.cluster == 0xFF01 && m->info.command.id == 0x01) {
-            zb_device_switch2wifi_request();
+        if (m && m->info.cluster == 0xFF01) {
+            if (m->info.command.id == 0x01) {
+                zb_device_switch2wifi_request();
+            } else if (m->info.command.id == 0x02 && m->data.size >= 4) {
+                uint32_t secs = *(uint32_t *)m->data.value;
+                zb_device_set_sleep(secs);
+            }
         }
         return ESP_OK;
     }
@@ -114,7 +119,7 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
             ha_mqtt_publish_joined(s_pan_id, s_channel);
             /* Periodischen Temp-Report im Zigbee-Kontext starten */
             esp_zb_scheduler_alarm_cancel(temp_report_periodic, 0);
-            esp_zb_scheduler_alarm(temp_report_periodic, 0, TEMP_REPORT_MS);
+            esp_zb_scheduler_alarm(temp_report_periodic, 0, s_temp_report_ms);
         } else {
             ESP_LOGW(TAG, "Steering fehlgeschlagen – Watchdog übernimmt Retry");
         }
@@ -253,7 +258,7 @@ static void temp_report_periodic(uint8_t param) {
         esp_zb_zcl_report_attr_cmd_req(&cmd);
     }
     /* selbst neu einplanen */
-    esp_zb_scheduler_alarm(temp_report_periodic, 0, TEMP_REPORT_MS);
+    esp_zb_scheduler_alarm(temp_report_periodic, 0, s_temp_report_ms);
 }
 
 /* Wird vom Heartbeat-Task aufgerufen: nur Wert schreiben (atomisch für int16) */
@@ -295,4 +300,22 @@ void zb_device_set_channel(uint8_t ch) {
 /* switch2wifi: NVS-Flag setzen + Neustart (aus Zigbee-Action-Handler) */
 void zb_device_switch2wifi_request(void) {
     wifi_switch_trigger();
+}
+
+/* set_sleep: Intervall setzen + NVS speichern (aus ZCL-Callback) */
+void zb_device_set_sleep(uint32_t seconds) {
+    if (seconds < 10) seconds = 10;   /* minimum 10s */
+    extern volatile uint32_t s_sleep_ms;
+    s_sleep_ms        = seconds * 1000UL;
+    s_temp_report_ms  = (seconds + 5) * 1000UL;
+    nvs_handle_t h;
+    if (nvs_open("client_cfg", NVS_READWRITE, &h) == ESP_OK) {
+        nvs_set_u32(h, "sleep_s", seconds);
+        nvs_commit(h);
+        nvs_close(h);
+    }
+    char line[64];
+    snprintf(line, sizeof(line),
+             "{\"t\":\"sleep_set\",\"s\":%lu}", (unsigned long)seconds);
+    ha_mqtt_emit_raw(line);
 }

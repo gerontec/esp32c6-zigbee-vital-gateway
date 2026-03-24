@@ -46,6 +46,11 @@ static void on_uart_cmd(const char *cmd, const char *payload, int len) {
     } else if (strcmp(cmd, "switch2wifi") == 0) {
         ESP_LOGI(TAG, "switch2wifi -> ZCL an alle Devices");
         zb_gateway_send_switch2wifi_all();
+    } else if (strcmp(cmd, "set_sleep") == 0) {
+        uint32_t secs = (uint32_t)atol(buf);
+        if (secs < 10) secs = 10;
+        ESP_LOGI(TAG, "set_sleep %lu s", (unsigned long)secs);
+        zb_gateway_send_set_sleep(secs);
     }
 }
 

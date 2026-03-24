@@ -16,7 +16,8 @@
 #define TAG              "main"
 #define BTN_GPIO         9       /* Boot-Taste GPIO9 */
 #define DS18B20_GPIO     6       /* 1-Wire Datenleitung */
-#define HEARTBEAT_MS     60000
+#define HEARTBEAT_MS_DEFAULT  600000U  /* 600 s */
+volatile uint32_t s_sleep_ms = HEARTBEAT_MS_DEFAULT;
 
 /* DS18B20 Befehle */
 #define DS18B20_CMD_CONVERT_T       0x44
@@ -81,7 +82,7 @@ static void on_cmd(const char *cmd, const char *payload, int len) {
 /* ── Heartbeat-Task ─────────────────────────────────────────────────────── */
 static void heartbeat_task(void *arg) {
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_MS));
+        vTaskDelay(pdMS_TO_TICKS(s_sleep_ms));
         uint32_t up   = (uint32_t)(esp_timer_get_time() / 1000000ULL);
         float    temp = temp_read();
         ha_mqtt_publish_heartbeat(up, zb_device_pan_id(), zb_device_channel(),
@@ -126,6 +127,11 @@ void app_main(void) {
     }
     ESP_ERROR_CHECK(ret);
 
+    /* Sleep-Intervall aus NVS laden */
+    { nvs_handle_t _h; uint32_t _s = 600;
+      if (nvs_open("client_cfg",NVS_READONLY,&_h)==ESP_OK){
+        nvs_get_u32(_h,"sleep_s",&_s); nvs_close(_h);}
+      s_sleep_ms = _s * 1000UL; }
     ha_mqtt_set_cmd_cb(on_cmd);
     ESP_ERROR_CHECK(ha_mqtt_init());
 
