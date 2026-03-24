@@ -532,7 +532,6 @@ def _html():
           <td>{clusters_html}</td>
           <td>{lqi_html}</td>
           <td>{rssi_html}</td>
-          <td>{d.get('last_seen','–')}</td>
         </tr>"""
 
     return f"""<!DOCTYPE html>
@@ -587,8 +586,8 @@ def _html():
   </form>
   <h3>Zigbee-Geräte ({len(s['devices'])})</h3>
   <table>
-    <tr><th>Adresse</th><th>Name</th><th>IEEE</th><th>Payload</th><th>LQI</th><th>RSSI</th><th>Zuletzt</th></tr>
-    {dev_rows or '<tr><td colspan="7"><em>keine Geräte</em></td></tr>'}
+    <tr><th>Adresse</th><th>Name</th><th>IEEE</th><th>Payload</th><th>LQI</th><th>RSSI</th></tr>
+    {dev_rows or '<tr><td colspan="6"><em>keine Geräte</em></td></tr>'}
   </table>
 </section>
 <section>
