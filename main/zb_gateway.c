@@ -15,6 +15,7 @@
 #include "zb_ota_server.h"
 #include "ha_mqtt.h"
 #include "aps/esp_zigbee_aps.h"
+#include "esp_ieee802154.h"
 
 #define ZB_DEFAULT_CHANNEL  20
 #define ZB_FALLBACK_CHANNEL 25
@@ -31,10 +32,12 @@ typedef struct {
     uint8_t  ieee[8];
     bool     used;
     uint8_t  lqi;   /* letzte LQI vom APS-Layer */
+    int8_t   rssi;  /* letzte RSSI vom IEEE 802.15.4 Layer (dBm) */
 } zb_device_t;
 
 static zb_device_t  s_devices[MAX_DEVICES];
 static SemaphoreHandle_t s_dev_mutex;
+static volatile int8_t  s_last_rssi = 0;
 
 static zb_device_t *find_or_add(uint16_t addr, const uint8_t *ieee) {
     for (int i = 0; i < MAX_DEVICES; i++) {
@@ -362,9 +365,14 @@ void zb_gateway_set_channel(uint8_t ch) {
 
 /* ── APS-Data-Indication: LQI je Device tracken ────────────────────────── */
 static bool aps_data_ind_cb(esp_zb_apsde_data_ind_t ind) {
+    int8_t rssi = esp_ieee802154_get_recent_rssi();
     xSemaphoreTake(s_dev_mutex, portMAX_DELAY);
     zb_device_t *d = find_or_add(ind.src_short_addr, NULL);
-    if (d) d->lqi = (uint8_t)ind.lqi;
+    if (d) {
+        d->lqi  = (uint8_t)ind.lqi;
+        d->rssi = rssi;
+        s_last_rssi = rssi;
+    }
     xSemaphoreGive(s_dev_mutex);
     return false;   /* nicht konsumiert */
 }
@@ -379,16 +387,19 @@ void zb_gateway_lqi_json(char *buf, size_t len) {
     bool first = true;
     for (int i = 0; i < MAX_DEVICES && r > 4; i++) {
         if (!s_devices[i].used) continue;
-        n = snprintf(p, r, "%s{\"addr\":\"0x%04x\",\"lqi\":%u}",
+        n = snprintf(p, r, "%s{\"addr\":\"0x%04x\",\"lqi\":%u,\"rssi\":%d}",
                      first ? "" : ",",
                      s_devices[i].short_addr,
-                     (unsigned)s_devices[i].lqi);
+                     (unsigned)s_devices[i].lqi,
+                     (int)s_devices[i].rssi);
         p += n; r -= (size_t)n;
         first = false;
     }
     snprintf(p, r, "]");
     xSemaphoreGive(s_dev_mutex);
 }
+
+int8_t zb_gateway_get_last_rssi(void) { return s_last_rssi; }
 
 void zb_gateway_list_devices(void) {
     xSemaphoreTake(s_dev_mutex, portMAX_DELAY);

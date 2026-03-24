@@ -7,6 +7,7 @@
 #include "nvs_flash.h"
 #include "driver/gpio.h"
 #include "esp_zigbee_core.h"
+
 #include "ha_mqtt.h"
 #include "zb_gateway.h"
 #include "zb_ota_server.h"
@@ -45,22 +46,24 @@ static void on_uart_cmd(const char *cmd, const char *payload, int len) {
     }
 }
 
-/* ── Heartbeat-Task: alle 60 s Status-JSON senden ───────────────────────── */
+/* ── Heartbeat-Task: sofort beim Boot, dann alle 60 s ───────────────────── */
 #define HEARTBEAT_INTERVAL_MS 60000
 
 static void heartbeat_task(void *arg) {
     char lqi_buf[256];
-    char line[384];
+    char line[400];
+    vTaskDelay(pdMS_TO_TICKS(5000));  /* Zigbee Startup abwarten */
     while (1) {
-        vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_INTERVAL_MS));
         uint32_t uptime_s = (uint32_t)(esp_timer_get_time() / 1000000ULL);
         uint8_t  ch       = esp_zb_get_current_channel();
         uint16_t pan      = esp_zb_get_pan_id();
+        int8_t   rssi     = zb_gateway_get_last_rssi();
         zb_gateway_lqi_json(lqi_buf, sizeof(lqi_buf));
         snprintf(line, sizeof(line),
-            "{\"t\":\"heartbeat\",\"uptime\":%lu,\"ch\":%u,\"pan\":\"0x%04x\",\"dev\":%s}",
-            (unsigned long)uptime_s, (unsigned)ch, (unsigned)pan, lqi_buf);
+            "{\"t\":\"heartbeat\",\"uptime\":%lu,\"ch\":%u,\"pan\":\"0x%04x\",\"rssi\":%d,\"dev\":%s}",
+            (unsigned long)uptime_s, (unsigned)ch, (unsigned)pan, (int)rssi, lqi_buf);
         ha_mqtt_emit_raw(line);
+        vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_INTERVAL_MS));
     }
 }
 
@@ -70,6 +73,7 @@ static void btn_task(void *arg) {
     gpio_set_pull_mode(BTN_PERMIT_JOIN, GPIO_PULLUP_ONLY);
 
     bool last = true;
+
     while (1) {
         bool cur = gpio_get_level(BTN_PERMIT_JOIN);
         if (last && !cur) {
@@ -101,5 +105,5 @@ void app_main(void) {
     zb_gateway_start();
 
     xTaskCreate(btn_task,       "btn",       2048, NULL, 3, NULL);
-    xTaskCreate(heartbeat_task, "heartbeat", 2048, NULL, 2, NULL);
+    xTaskCreate(heartbeat_task, "heartbeat", 4096, NULL, 2, NULL);
 }

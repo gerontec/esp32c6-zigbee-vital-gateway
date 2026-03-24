@@ -14,5 +14,4 @@ idf_component_register(
         freertos
         log
         ieee802154
-        espressif__onewire_bus
 )

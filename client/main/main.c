@@ -3,69 +3,16 @@
 #include "freertos/task.h"
 #include "esp_log.h"
 #include "esp_timer.h"
+#include "esp_ieee802154.h"
 #include "nvs_flash.h"
 #include "driver/gpio.h"
 #include "esp_zigbee_core.h"
 #include "ha_mqtt.h"
 #include "zb_device.h"
-#include "onewire_bus.h"
-#include "onewire_cmd.h"
-#include "onewire_device.h"
 
 #define TAG              "main"
 #define BTN_GPIO         9       /* Boot-Taste GPIO9 */
-#define DS18B20_GPIO     6       /* 1-Wire Datenleitung */
-#define HEARTBEAT_MS     10000
-
-/* DS18B20 Befehle */
-#define DS18B20_CMD_CONVERT_T     0x44
-#define DS18B20_CMD_READ_SCRATCHPAD 0xBE
-#define DS18B20_NO_TEMP           -127.0f
-
-static onewire_bus_handle_t s_ow_bus = NULL;
-static bool                 s_sensor_found = false;
-
-static void temp_sensor_init(void) {
-    onewire_bus_config_t bus_cfg = { .bus_gpio_num = DS18B20_GPIO };
-    onewire_bus_rmt_config_t rmt_cfg = { .max_rx_bytes = 10 };
-    if (onewire_new_bus_rmt(&bus_cfg, &rmt_cfg, &s_ow_bus) != ESP_OK) {
-        ESP_LOGE(TAG, "1-Wire Bus init fehlgeschlagen (GPIO%d)", DS18B20_GPIO);
-        return;
-    }
-    /* Sensor-Suche */
-    onewire_device_iter_handle_t iter;
-    onewire_new_device_iter(s_ow_bus, &iter);
-    onewire_device_t dev;
-    if (onewire_device_iter_get_next(iter, &dev) == ESP_OK) {
-        s_sensor_found = true;
-        ESP_LOGI(TAG, "DS18B20 gefunden an GPIO%d (addr: %016llx)",
-                 DS18B20_GPIO, dev.address);
-    } else {
-        ESP_LOGW(TAG, "Kein DS18B20 an GPIO%d – temp=null", DS18B20_GPIO);
-    }
-    onewire_del_device_iter(iter);
-}
-
-static float temp_read(void) {
-    if (!s_sensor_found || !s_ow_bus) return DS18B20_NO_TEMP;
-
-    /* CONVERT T starten */
-    if (onewire_bus_reset(s_ow_bus) != ESP_OK) return DS18B20_NO_TEMP;
-    uint8_t cmd_convert[] = { ONEWIRE_CMD_SKIP_ROM, DS18B20_CMD_CONVERT_T };
-    onewire_bus_write_bytes(s_ow_bus, cmd_convert, sizeof(cmd_convert));
-    vTaskDelay(pdMS_TO_TICKS(800));  /* 12-bit Konversion ~750 ms */
-
-    /* SCRATCHPAD lesen */
-    if (onewire_bus_reset(s_ow_bus) != ESP_OK) return DS18B20_NO_TEMP;
-    uint8_t cmd_read[] = { ONEWIRE_CMD_SKIP_ROM, DS18B20_CMD_READ_SCRATCHPAD };
-    onewire_bus_write_bytes(s_ow_bus, cmd_read, sizeof(cmd_read));
-    uint8_t scratchpad[9] = {0};
-    onewire_bus_read_bytes(s_ow_bus, scratchpad, sizeof(scratchpad));
-
-    /* Temperatur aus Byte 0+1 berechnen (0.0625 °C / LSB) */
-    int16_t raw = (int16_t)((scratchpad[1] << 8) | scratchpad[0]);
-    return raw * 0.0625f;
-}
+#define HEARTBEAT_MS     60000
 
 /* ── Kommando-Handler: Befehle vom Pi ───────────────────────────────────── */
 static void on_cmd(const char *cmd, const char *payload, int len) {
@@ -85,8 +32,9 @@ static void on_cmd(const char *cmd, const char *payload, int len) {
 static void heartbeat_task(void *arg) {
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_MS));
-        uint32_t up = (uint32_t)(esp_timer_get_time() / 1000000ULL);
-        ha_mqtt_publish_heartbeat(up, zb_device_pan_id(), zb_device_channel(), zb_device_rssi(), temp_read());
+        uint32_t up   = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+        int8_t   rssi = esp_ieee802154_get_recent_rssi();
+        ha_mqtt_publish_heartbeat(up, zb_device_pan_id(), zb_device_channel(), rssi);
     }
 }
 
@@ -127,7 +75,6 @@ void app_main(void) {
 
     ha_mqtt_publish_boot();
 
-    temp_sensor_init();
     zb_device_start();
 
     xTaskCreate(btn_task,       "btn",       2048, NULL, 3, NULL);

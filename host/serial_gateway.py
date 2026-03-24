@@ -71,7 +71,7 @@ _state = {
 _ota_file = None   # open file handle during transfer
 
 def _now():
-    return datetime.now().strftime("%H:%M:%S")
+    return datetime.now().strftime("%d.%m. %H:%M:%S")
 
 # ── MariaDB ────────────────────────────────────────────────────────────────
 _db_conn = None
@@ -147,7 +147,7 @@ def db_init():
         with _state_lock:
             for row in cur.fetchall():
                 addr, ieee, name, last_seen = row
-                ts = last_seen.strftime("%H:%M:%S") if last_seen else "–"
+                ts = last_seen.strftime("%d.%m. %H:%M:%S") if last_seen else "–"
                 _state["devices"].setdefault(addr, {
                     "ieee": ieee or "", "name": name or addr,
                     "last_seen": ts, "clusters": {}
@@ -164,7 +164,7 @@ def db_insert_chan_scan(ch, count, nets_json):
             cur = _db_cursor()
             cur.execute("""
                 INSERT INTO esp32_chan_scan (mac, ts, ch, count, nets)
-                VALUES (%s, NOW(3), %s, %s, %s)
+                VALUES (%s, UTC_TIMESTAMP(3), %s, %s, %s)
             """, (DB_MAC, ch, count, nets_json))
             cur.close()
         except Exception as e:
@@ -176,8 +176,8 @@ def db_upsert_gateway(status):
             cur = _db_cursor()
             cur.execute("""
                 INSERT INTO esp32_gateways (mac, status, last_seen)
-                VALUES (%s, %s, NOW())
-                ON DUPLICATE KEY UPDATE status=VALUES(status), last_seen=NOW()
+                VALUES (%s, %s, UTC_TIMESTAMP())
+                ON DUPLICATE KEY UPDATE status=VALUES(status), last_seen=UTC_TIMESTAMP()
             """, (DB_MAC, status[:16]))
             cur.close()
         except Exception as e:
@@ -189,8 +189,8 @@ def db_upsert_zigbee_device(addr, ieee=""):
             cur = _db_cursor()
             cur.execute("""
                 INSERT INTO esp32_zigbee_devices (mac, addr, ieee, last_seen)
-                VALUES (%s, %s, %s, NOW())
-                ON DUPLICATE KEY UPDATE ieee=VALUES(ieee), last_seen=NOW()
+                VALUES (%s, %s, %s, UTC_TIMESTAMP())
+                ON DUPLICATE KEY UPDATE ieee=VALUES(ieee), last_seen=UTC_TIMESTAMP()
             """, (DB_MAC, addr, ieee))
             cur.close()
         except Exception as e:
@@ -211,10 +211,10 @@ def db_insert_zigbee_data(addr, cluster, raw):
             cur = _db_cursor()
             cur.execute("""
                 INSERT INTO esp32_zigbee_data (mac, addr, cluster, ts, value, raw_json)
-                VALUES (%s, %s, %s, NOW(3), %s, %s)
+                VALUES (%s, %s, %s, UTC_TIMESTAMP(3), %s, %s)
             """, (DB_MAC, addr, cluster, value, json.dumps(raw)))
             cur.execute("""
-                UPDATE esp32_zigbee_devices SET last_seen=NOW()
+                UPDATE esp32_zigbee_devices SET last_seen=UTC_TIMESTAMP()
                 WHERE mac=%s AND addr=%s
             """, (DB_MAC, addr))
             cur.close()
@@ -266,6 +266,9 @@ mq.on_message = on_message
 class CoordinatorSerial:
     """Persistente Serial-Verbindung ohne ESP32-C6 Reset-Trigger."""
     def __init__(self, port, baudrate):
+        # HUPCL deaktivieren bevor pyserial öffnet → WCH-Chip löst kein DTR-Reset aus
+        import subprocess
+        subprocess.run(["stty", "-F", port, "-hupcl"], check=False)
         self.ser = serial.Serial()
         self.ser.port     = port
         self.ser.baudrate = baudrate
@@ -274,8 +277,11 @@ class CoordinatorSerial:
         self.ser.rts      = False
         self.ser.open()
         time.sleep(0.5)
-        self.ser.dtr = False
-        print(f"[Serial] {port} @ {baudrate} offen (DTR/RTS=LOW)")
+        try:
+            self.ser.dtr = False
+        except Exception:
+            pass
+        print(f"[Serial] {port} @ {baudrate} offen (DTR/RTS=LOW, HUPCL=off)")
 
     def read(self, n):   return self.ser.read(n)
     def write(self, d):  return self.ser.write(d)
@@ -331,7 +337,7 @@ def dispatch(line: str):
                     "ieee": ieee, "name": addr, "last_seen": "", "clusters": {}
                 })
                 dev["ieee"] = ieee
-                dev["clusters"][sub] = p
+                dev["clusters"][sub] = {"payload": p, "ts": _now()}
                 dev["last_seen"] = _now()
 
     elif t == "heartbeat":
@@ -346,12 +352,12 @@ def dispatch(line: str):
             })
             for d in msg.get("dev", []):
                 addr = d.get("addr")
-                lqi  = d.get("lqi", 0)
                 if addr:
                     dev = _state["devices"].setdefault(addr, {
                         "ieee": "", "name": addr, "last_seen": "", "clusters": {}
                     })
-                    dev["lqi"] = lqi
+                    if "lqi"  in d: dev["lqi"]  = d["lqi"]
+                    if "rssi" in d: dev["rssi"] = d["rssi"]
         devs = msg.get("dev", [])
         lqi_str = " ".join(f"{d['addr']}={d['lqi']}" for d in devs) if devs else "–"
         print(f"[HB] uptime={msg.get('uptime')}s ch={msg.get('ch')} pan={msg.get('pan')} lqi=[{lqi_str}]")
@@ -476,18 +482,36 @@ def _html():
 
     dev_rows = ""
     for addr, d in s["devices"].items():
-        clusters = " &nbsp;|&nbsp; ".join(
-            f"<b>{k}</b>: {json.dumps(v) if isinstance(v, dict) else v}" for k, v in d["clusters"].items()
-        )
-        lqi = d.get("lqi", "–")
-        lqi_bar = f'<meter value="{lqi}" min="0" max="255" style="width:60px"></meter> {lqi}' if isinstance(lqi, int) else "–"
+        clusters_html = ""
+        for k, v in d["clusters"].items():
+            if isinstance(v, dict) and "payload" in v:
+                payload_str = json.dumps(v["payload"], indent=2, ensure_ascii=False)
+                ts_str = v.get("ts", "")
+            else:
+                payload_str = json.dumps(v, indent=2, ensure_ascii=False)
+                ts_str = ""
+            clusters_html += (
+                f'<div style="margin-bottom:.6em">'
+                f'<b>{k}</b>'
+                + (f' <span style="color:#888;font-size:.85em">{ts_str}</span>' if ts_str else "")
+                + f'<pre style="margin:.2em 0 0 0;background:#0d0d1f;padding:.4em;'
+                  f'white-space:pre-wrap;word-break:break-all;border-left:2px solid #4a6aaa">'
+                  f'{payload_str}</pre></div>'
+            )
+        clusters_html = clusters_html or "<em>–</em>"
+        lqi  = d.get("lqi",  "–")
+        rssi = d.get("rssi", "–")
+        lqi_html  = (f'<meter value="{lqi}" min="0" max="255" style="width:50px"></meter> {lqi}'
+                     if isinstance(lqi, int) else "–")
+        rssi_html = (f'{rssi} dBm' if isinstance(rssi, int) else "–")
         dev_rows += f"""
         <tr>
           <td>{addr}</td>
           <td>{d.get('name', addr)}</td>
           <td>{d.get('ieee','')}</td>
-          <td>{clusters or '–'}</td>
-          <td>{lqi_bar}</td>
+          <td>{clusters_html}</td>
+          <td>{lqi_html}</td>
+          <td>{rssi_html}</td>
           <td>{d.get('last_seen','–')}</td>
         </tr>"""
 
@@ -543,9 +567,13 @@ def _html():
   </form>
   <h3>Zigbee-Geräte ({len(s['devices'])})</h3>
   <table>
-    <tr><th>Adresse</th><th>Name</th><th>IEEE</th><th>Werte</th><th>LQI</th><th>Zuletzt</th></tr>
-    {dev_rows or '<tr><td colspan="5"><em>keine Geräte</em></td></tr>'}
+    <tr><th>Adresse</th><th>Name</th><th>IEEE</th><th>Payload</th><th>LQI</th><th>RSSI</th><th>Zuletzt</th></tr>
+    {dev_rows or '<tr><td colspan="7"><em>keine Geräte</em></td></tr>'}
   </table>
+</section>
+<section>
+  <h2>Raw State</h2>
+  <pre style="background:#0d0d1f;padding:1em;overflow-x:auto;white-space:pre-wrap;word-break:break-all;font-size:.85em">{json.dumps(s, indent=2, ensure_ascii=False)}</pre>
 </section>
 <footer>
   Base: <code>{BASE}</code> &nbsp;|&nbsp; DB: <code>{DB_HOST}/{DB_NAME}</code>
