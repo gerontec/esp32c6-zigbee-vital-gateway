@@ -300,6 +300,32 @@ static void zb_task(void *arg) {
         esp_zb_on_off_cluster_create(&on_off_cfg),
         ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
 
+    /* Illuminance (0x0400) */
+    esp_zb_illuminance_meas_cluster_cfg_t illum_cfg = {
+        .measured_value = 0, .min_value = 0, .max_value = 0xfffe,
+    };
+    esp_zb_cluster_list_add_illuminance_meas_cluster(cl,
+        esp_zb_illuminance_meas_cluster_create(&illum_cfg), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
+    /* Occupancy Sensing (0x0406) – Bewegungsmelder */
+    esp_zb_occupancy_sensing_cluster_cfg_t occ_cfg = {
+        .occupancy = 0, .sensor_type = 0, .sensor_type_bitmap = 1,
+    };
+    esp_zb_cluster_list_add_occupancy_sensing_cluster(cl,
+        esp_zb_occupancy_sensing_cluster_create(&occ_cfg), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
+    /* IAS Zone (0x0500) – PIR/Tür/Rauch-Sensoren */
+    esp_zb_ias_zone_cluster_cfg_t ias_cfg = {
+        .zone_state = 0, .zone_type = ESP_ZB_ZCL_IAS_ZONE_ZONETYPE_MOTION, .zone_status = 0,
+    };
+    esp_zb_cluster_list_add_ias_zone_cluster(cl,
+        esp_zb_ias_zone_cluster_create(&ias_cfg), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
+    /* Power Configuration (0x0001) – Batterie */
+    esp_zb_power_config_cluster_cfg_t pwr_cfg = { .main_voltage = 0 };
+    esp_zb_cluster_list_add_power_config_cluster(cl,
+        esp_zb_power_config_cluster_create(&pwr_cfg), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
     /* Custom Cluster 0xFF01: switch2wifi-Befehl an Client (CLIENT-Role) */
     esp_zb_attribute_list_t *sw_attr = esp_zb_zcl_attr_list_create(0xFF01);
     esp_zb_cluster_list_add_custom_cluster(cl, sw_attr, ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
