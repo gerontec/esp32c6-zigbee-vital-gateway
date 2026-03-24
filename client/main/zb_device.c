@@ -30,9 +30,14 @@
 #define JOIN_RETRY_MS  30000   /* alle 30 s Join-Versuch wenn nicht verbunden */
 #define DEFAULT_CH     20
 
-static bool     s_joined  = false;
-static uint16_t s_pan_id  = 0;
-static uint8_t  s_channel = 0;
+static bool      s_joined      = false;
+static uint16_t  s_pan_id      = 0;
+static uint8_t   s_channel     = 0;
+static volatile int16_t s_temp_pending = (int16_t)0x8000;
+#define TEMP_REPORT_MS 65000
+
+/* Vorwärtsdeklaration */
+static void temp_report_periodic(uint8_t param);   /* 65 s – kurz nach dem 60s-Heartbeat */
 
 /* ── ZCL Attribute Handler ──────────────────────────────────────────────── */
 static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t id,
@@ -99,6 +104,9 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
             s_channel = esp_zb_get_current_channel();
             ESP_LOGI(TAG, "Verbunden – PAN 0x%04hx Kanal %d", s_pan_id, s_channel);
             ha_mqtt_publish_joined(s_pan_id, s_channel);
+            /* Periodischen Temp-Report im Zigbee-Kontext starten */
+            esp_zb_scheduler_alarm_cancel(temp_report_periodic, 0);
+            esp_zb_scheduler_alarm(temp_report_periodic, 0, TEMP_REPORT_MS);
         } else {
             ESP_LOGW(TAG, "Steering fehlgeschlagen – Watchdog übernimmt Retry");
         }
@@ -209,28 +217,36 @@ void zb_device_leave(void) {
     esp_zb_zdo_device_leave_req(NULL, true, true);
 }
 
-void zb_device_report_temp(int16_t temp_100) {
-    /* Attribut lokal setzen */
-    esp_zb_zcl_set_attribute_val(ZB_EP,
-        ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
-        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
-        &temp_100, false);
+/* Periodischer Temp-Report – läuft ausschließlich im Zigbee-Task-Kontext */
+static void temp_report_periodic(uint8_t param) {
+    (void)param;
+    if (s_joined) {
+        int16_t t = s_temp_pending;
+        esp_zb_zcl_set_attribute_val(ZB_EP,
+            ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
+            ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+            ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
+            &t, false);
+        esp_zb_zcl_report_attr_cmd_t cmd = {
+            .zcl_basic_cmd = {
+                .dst_addr_u  = { .addr_short = 0x0000 },
+                .dst_endpoint = 1,
+                .src_endpoint = ZB_EP,
+            },
+            .address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
+            .clusterID    = ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
+            .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+            .attributeID  = ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
+        };
+        esp_zb_zcl_report_attr_cmd_req(&cmd);
+    }
+    /* selbst neu einplanen */
+    esp_zb_scheduler_alarm(temp_report_periodic, 0, TEMP_REPORT_MS);
+}
 
-    /* Expliziter Report an Coordinator (0x0000) */
-    if (!s_joined) return;
-    esp_zb_zcl_report_attr_cmd_t cmd = {
-        .zcl_basic_cmd = {
-            .dst_addr_u  = { .addr_short = 0x0000 },
-            .dst_endpoint = 1,
-            .src_endpoint = ZB_EP,
-        },
-        .address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
-        .clusterID    = ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
-        .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
-        .attributeID  = ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
-    };
-    esp_zb_zcl_report_attr_cmd_req(&cmd);
+/* Wird vom Heartbeat-Task aufgerufen: nur Wert schreiben (atomisch für int16) */
+void zb_device_report_temp(int16_t temp_100) {
+    s_temp_pending = temp_100;
 }
 
 bool     zb_device_joined(void)  { return s_joined; }

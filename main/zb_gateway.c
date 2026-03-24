@@ -277,6 +277,21 @@ static void zb_task(void *arg) {
     esp_zb_cluster_list_add_ota_cluster(cl,
         zb_ota_server_cluster_create(), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
+    /* Temperature + On/Off als Client registrieren → empfängt Attribute-Reports */
+    esp_zb_temperature_meas_cluster_cfg_t temp_cfg = {
+        .measured_value = (int16_t)0x8000,
+        .min_value = -5000,
+        .max_value =  8500,
+    };
+    esp_zb_cluster_list_add_temperature_meas_cluster(cl,
+        esp_zb_temperature_meas_cluster_create(&temp_cfg),
+        ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
+    esp_zb_on_off_cluster_cfg_t on_off_cfg = { .on_off = false };
+    esp_zb_cluster_list_add_on_off_cluster(cl,
+        esp_zb_on_off_cluster_create(&on_off_cfg),
+        ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
     esp_zb_ep_list_t *ep = esp_zb_ep_list_create();
     esp_zb_ep_list_add_ep(ep, cl, ZB_ENDPOINT,
         ESP_ZB_AF_HA_PROFILE_ID, ESP_ZB_HA_ON_OFF_SWITCH_DEVICE_ID);
