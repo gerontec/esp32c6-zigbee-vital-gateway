@@ -287,6 +287,14 @@ static void zb_task(void *arg) {
         esp_zb_temperature_meas_cluster_create(&temp_cfg),
         ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
 
+    /* Humidity Measurement (0x0405) CLIENT */
+    esp_zb_humidity_meas_cluster_cfg_t hum_cfg = {
+        .measured_value = 0, .min_value = 0, .max_value = 10000,
+    };
+    esp_zb_cluster_list_add_humidity_meas_cluster(cl,
+        esp_zb_humidity_meas_cluster_create(&hum_cfg),
+        ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
+
     esp_zb_on_off_cluster_cfg_t on_off_cfg = { .on_off = false };
     esp_zb_cluster_list_add_on_off_cluster(cl,
         esp_zb_on_off_cluster_create(&on_off_cfg),
