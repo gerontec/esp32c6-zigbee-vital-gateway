@@ -197,7 +197,9 @@ def db_upsert_zigbee_device(addr, ieee=""):
             print(f"[DB] zigbee device upsert: {e}")
 
 def _extract_value(cluster, raw):
-    if cluster == "temperature":  return raw.get("raw", 0) / 100.0
+    if cluster == "temperature":
+        r = raw.get("raw")
+        return None if (r is None or r == -32768) else r / 100.0
     if cluster == "humidity":     return raw.get("raw", 0) / 100.0
     if cluster == "illuminance":  return raw.get("raw")
     if cluster == "on_off":       return raw.get("v")
@@ -337,6 +339,9 @@ def dispatch(line: str):
                     "ieee": ieee, "name": addr, "last_seen": "", "clusters": {}
                 })
                 dev["ieee"] = ieee
+                # Temperatur-Cluster: 0x8000 ist Ungültig → raw:null
+                if sub == "temperature" and isinstance(p, dict) and p.get("raw") == -32768:
+                    p = dict(p); p["raw"] = None
                 dev["clusters"][sub] = {"payload": p, "ts": _now()}
                 dev["last_seen"] = _now()
 
@@ -358,6 +363,8 @@ def dispatch(line: str):
                     })
                     if "lqi"  in d: dev["lqi"]  = d["lqi"]
                     if "rssi" in d: dev["rssi"] = d["rssi"]
+                    dev["last_seen"] = _now()
+                    db_upsert_zigbee_device(addr)
         devs = msg.get("dev", [])
         lqi_str = " ".join(f"{d['addr']}={d['lqi']}" for d in devs) if devs else "–"
         print(f"[HB] uptime={msg.get('uptime')}s ch={msg.get('ch')} pan={msg.get('pan')} lqi=[{lqi_str}]")
