@@ -25,5 +25,5 @@ void        ha_mqtt_publish_boot(void);
 void        ha_mqtt_publish_joined(uint16_t pan_id, uint8_t channel);
 void        ha_mqtt_publish_left(void);
 void        ha_mqtt_publish_attr(const char *cluster, const char *json_val);
-void        ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t channel, int8_t rssi);
+void        ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t channel, int8_t rssi, float temp_c);
 void        ha_mqtt_publish_ota_status(const char *status, uint32_t offset, uint32_t total);

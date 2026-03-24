@@ -14,11 +14,13 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "ha_mqtt.h"
+#include "esp_mac.h"
 
 #define BUF_SIZE 512
 
 static mqtt_cmd_cb_t     s_cmd_cb  = NULL;
 static SemaphoreHandle_t s_tx_mtx  = NULL;
+static char s_mac_str[18] = "";  /* "AA:BB:CC:DD:EE:FF" */
 
 /* ── Logs stumm ─────────────────────────────────────────────────────────────── */
 static int null_vprintf(const char *fmt, va_list args) {
@@ -66,6 +68,11 @@ static void rx_task(void *arg) {
 esp_err_t ha_mqtt_init(void) {
     s_tx_mtx = xSemaphoreCreateMutex();
     configASSERT(s_tx_mtx);
+    /* MAC einmalig lesen */
+    uint8_t mac[6];
+    esp_read_mac(mac, ESP_MAC_IEEE802154);
+    snprintf(s_mac_str, sizeof(s_mac_str), "%02x:%02x:%02x:%02x:%02x:%02x",
+             mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
     esp_log_set_vprintf(null_vprintf);
     setvbuf(stdout, NULL, _IONBF, 0);
     xTaskCreate(rx_task, "usb_rx", 2048, NULL, 4, NULL);
@@ -106,10 +113,16 @@ void ha_mqtt_publish_ota_status(const char *status, uint32_t offset, uint32_t to
     emit(line);
 }
 
-void ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t channel, int8_t rssi) {
-    char line[112];
-    snprintf(line, sizeof(line),
-        "{\"t\":\"heartbeat\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d}",
-        (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi);
+void ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t channel, int8_t rssi, float temp_c) {
+    char line[200];
+    if (temp_c <= -126.0f) {
+        snprintf(line, sizeof(line),
+            "{\"t\":\"heartbeat\",\"mac\":\"%s\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d,\"temp\":null}",
+            s_mac_str, (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi);
+    } else {
+        snprintf(line, sizeof(line),
+            "{\"t\":\"heartbeat\",\"mac\":\"%s\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d,\"temp\":%.2f}",
+            s_mac_str, (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi, (double)temp_c);
+    }
     emit(line);
 }
