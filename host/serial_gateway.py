@@ -516,8 +516,9 @@ def _html():
                      if isinstance(lqi, int) else "–")
         rssi_html = (f'{rssi} dBm' if isinstance(rssi, int) else "–")
         dev_rows += f"""
-        <tr>
-          <td>{addr}</td>
+        <tr style="cursor:pointer" onclick="location.href='/device/{addr}'"
+            title="Detail anzeigen">
+          <td><a href="/device/{addr}" style="color:#7ecbff;text-decoration:none">{addr}</a></td>
           <td>{d.get('name', addr)}</td>
           <td>{d.get('ieee','')}</td>
           <td>{clusters_html}</td>
@@ -592,6 +593,86 @@ def _html():
 </body></html>"""
 
 
+def _device_html(addr):
+    """Detail-Seite für ein einzelnes Zigbee-Gerät."""
+    with _state_lock:
+        s = json.loads(json.dumps(_state))
+    dev = s["devices"].get(addr)
+    if dev is None:
+        return None
+
+    clusters_html = ""
+    for k, v in dev["clusters"].items():
+        if isinstance(v, dict) and "payload" in v:
+            payload_str = json.dumps(v["payload"], indent=2, ensure_ascii=False)
+            ts_str = v.get("ts", "")
+        else:
+            payload_str = json.dumps(v, indent=2, ensure_ascii=False)
+            ts_str = ""
+        clusters_html += f"""
+        <section style="margin-bottom:1.2em">
+          <h3 style="color:#7ecbff;margin-bottom:.4em">{k}
+            {"<span style='color:#888;font-size:.8em;margin-left:.5em'>" + ts_str + "</span>" if ts_str else ""}
+          </h3>
+          <pre style="background:#0d0d1f;padding:1em;white-space:pre-wrap;
+               word-break:break-all;border-left:3px solid #4a6aaa;margin:0;
+               font-size:.9em">{payload_str}</pre>
+        </section>"""
+
+    lqi  = dev.get("lqi",  "–")
+    rssi = dev.get("rssi", "–")
+    lqi_bar = (f'<meter value="{lqi}" min="0" max="255" style="width:80px;vertical-align:middle"></meter> {lqi}'
+               if isinstance(lqi, int) else "–")
+
+    return f"""<!DOCTYPE html>
+<html lang="de"><head>
+<meta charset="utf-8">
+<meta http-equiv="refresh" content="15">
+<title>Device {addr}</title>
+<style>
+  body{{background:#1a1a2e;color:#e0e0e0;font-family:monospace;margin:2em}}
+  h1{{color:#00d4ff}} h2{{color:#a0c4ff;border-bottom:1px solid #333;padding-bottom:.3em}}
+  h3{{color:#7ecbff;margin-top:1.2em}}
+  table{{border-collapse:collapse;width:100%;margin:.5em 0}}
+  th,td{{border:1px solid #444;padding:.4em .8em;text-align:left}}
+  th{{background:#2a2a4a}} tr:nth-child(even){{background:#1e1e3a}}
+  section{{background:#16213e;padding:1.2em;margin:1.2em 0;border-radius:6px}}
+  a{{color:#7ecbff}}
+  button{{background:#2a4a7a;color:#e0e0e0;border:1px solid #4a6a9a;
+          padding:.3em .8em;cursor:pointer;border-radius:3px}}
+  button:hover{{background:#3a6aaa}}
+</style></head>
+<body>
+<p><a href="/">← Zurück zum Dashboard</a></p>
+<h1>Device <code>{addr}</code></h1>
+<section>
+<table>
+  <tr><th>Adresse</th><td>{addr}</td></tr>
+  <tr><th>Name</th><td>{dev.get('name', addr)}</td></tr>
+  <tr><th>IEEE</th><td>{dev.get('ieee', '–')}</td></tr>
+  <tr><th>LQI</th><td>{lqi_bar}</td></tr>
+  <tr><th>RSSI</th><td>{"" + str(rssi) + " dBm" if isinstance(rssi, int) else "–"}</td></tr>
+  <tr><th>Zuletzt gesehen</th><td>{dev.get('last_seen', '–')}</td></tr>
+</table>
+</section>
+<h2>Cluster-Payloads ({len(dev["clusters"])})</h2>
+{clusters_html or "<em>keine Daten</em>"}
+<section>
+  <h2>Commands</h2>
+  <form method="POST" action="/api/device/{addr}/cmd">
+    <select name="cmd" style="background:#2a2a4a;color:#e0e0e0;border:1px solid #555;padding:.25em">
+      <option value="switch2wifi">switch2wifi</option>
+      <option value="leave">leave</option>
+    </select>
+    <button type="submit">Senden</button>
+  </form>
+</section>
+<footer style="margin-top:2em;color:#666;font-size:.85em">
+  Auto-Refresh 15 s &nbsp;|&nbsp; <a href="/api/state">JSON State</a>
+</footer>
+</body></html>"""
+
+
 class _Handler(BaseHTTPRequestHandler):
     def log_message(self, fmt, *args):
         pass   # kein Access-Log im stdout
@@ -608,6 +689,14 @@ class _Handler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path in ("/", "/index.html"):
             self._send(200, "text/html; charset=utf-8", _html())
+        elif path.startswith("/device/"):
+            addr = path[len("/device/"):]
+            page = _device_html(addr)
+            if page:
+                self._send(200, "text/html; charset=utf-8", page)
+            else:
+                self._send(404, "text/html; charset=utf-8",
+                           f"<h2>Device {addr} nicht gefunden</h2><a href='/'>← zurück</a>")
         elif path == "/api/state":
             with _state_lock:
                 self._send(200, "application/json", json.dumps(_state, indent=2))
@@ -618,6 +707,20 @@ class _Handler(BaseHTTPRequestHandler):
         length = int(self.headers.get("Content-Length", 0))
         params = parse_qs(self.rfile.read(length).decode("utf-8", errors="replace"))
         path   = urlparse(self.path).path
+        if path.startswith("/api/device/") and path.endswith("/cmd"):
+            addr = path[len("/api/device/"):-len("/cmd")]
+            cmd  = params.get("cmd", [""])[0]
+            if cmd == "switch2wifi":
+                uart_msg = json.dumps({"cmd": "switch2wifi"}) + "\n"
+                ser.write(uart_msg.encode())
+                print(f"[→C6] switch2wifi → {addr}")
+            elif cmd == "leave":
+                uart_msg = json.dumps({"cmd": "leave"}) + "\n"
+                ser.write(uart_msg.encode())
+            self.send_response(302)
+            self.send_header("Location", f"/device/{addr}")
+            self.end_headers()
+            return
 
         if path == "/api/permit_join":
             secs = params.get("secs", ["0"])[0]
