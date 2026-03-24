@@ -84,8 +84,8 @@ static void btn_task(void *arg) {
 /* ── app_main ───────────────────────────────────────────────────────────── */
 void app_main(void) {
     ESP_LOGI(TAG, "=== ESP32-C6 Zigbee Gateway ===");
-    ESP_LOGI(TAG, "  JSON : UART1 TX=GPIO16 RX=GPIO17 → Pi /dev/ttyUSBx");
-    ESP_LOGI(TAG, "  Logs : UART0 / USB-CDC → /dev/ttyACM0");
+    ESP_LOGI(TAG, "");
+    ESP_LOGI(TAG, "  JSON : UART1 TX=GPIO16 RX=GPIO17 → Pi /dev/ttyACM0");
 
     esp_err_t ret = nvs_flash_init();
     if (ret == ESP_ERR_NVS_NO_FREE_PAGES ||
