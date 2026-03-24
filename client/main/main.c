@@ -81,9 +81,17 @@ static void on_cmd(const char *cmd, const char *payload, int len) {
 static void heartbeat_task(void *arg) {
     while (1) {
         vTaskDelay(pdMS_TO_TICKS(HEARTBEAT_MS));
-        uint32_t up = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+        uint32_t up   = (uint32_t)(esp_timer_get_time() / 1000000ULL);
+        float    temp = temp_read();
         ha_mqtt_publish_heartbeat(up, zb_device_pan_id(), zb_device_channel(),
-                                  zb_device_rssi(), temp_read());
+                                  zb_device_rssi(), temp);
+        /* Temperatur auch via Zigbee melden (Temperature Cluster) */
+        if (temp > -126.0f) {
+            zb_device_report_temp((int16_t)(temp * 100.0f));
+        } else {
+            /* Sensor nicht vorhanden: invalid-Wert reporten */
+            zb_device_report_temp((int16_t)0x8000);
+        }
     }
 }
 

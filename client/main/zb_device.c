@@ -146,6 +146,14 @@ static void zb_task(void *arg) {
     esp_zb_cluster_list_add_on_off_cluster(cl,
         esp_zb_on_off_cluster_create(&on_off_cfg), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
+    esp_zb_temperature_meas_cluster_cfg_t temp_cfg = {
+        .measured_value = 0x8000,   /* ungültig */
+        .min_value      = -5000,    /* -50°C */
+        .max_value      =  8500,    /* +85°C */
+    };
+    esp_zb_cluster_list_add_temperature_meas_cluster(cl,
+        esp_zb_temperature_meas_cluster_create(&temp_cfg), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+
     esp_zb_cluster_list_add_ota_cluster(cl,
         zb_ota_client_cluster_create(), ESP_ZB_ZCL_CLUSTER_CLIENT_ROLE);
 
@@ -199,6 +207,30 @@ void zb_device_permit_join(uint8_t seconds) {
 
 void zb_device_leave(void) {
     esp_zb_zdo_device_leave_req(NULL, true, true);
+}
+
+void zb_device_report_temp(int16_t temp_100) {
+    /* Attribut lokal setzen */
+    esp_zb_zcl_set_attribute_val(ZB_EP,
+        ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
+        ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
+        &temp_100, false);
+
+    /* Expliziter Report an Coordinator (0x0000) */
+    if (!s_joined) return;
+    esp_zb_zcl_report_attr_cmd_t cmd = {
+        .zcl_basic_cmd = {
+            .dst_addr_u  = { .addr_short = 0x0000 },
+            .dst_endpoint = 1,
+            .src_endpoint = ZB_EP,
+        },
+        .address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
+        .clusterID    = ESP_ZB_ZCL_CLUSTER_ID_TEMP_MEASUREMENT,
+        .cluster_role = ESP_ZB_ZCL_CLUSTER_SERVER_ROLE,
+        .attributeID  = ESP_ZB_ZCL_ATTR_TEMP_MEASUREMENT_VALUE_ID,
+    };
+    esp_zb_zcl_report_attr_cmd_req(&cmd);
 }
 
 bool     zb_device_joined(void)  { return s_joined; }
