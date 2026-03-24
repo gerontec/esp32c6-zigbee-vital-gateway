@@ -58,6 +58,8 @@ static void rx_task(void *arg) {
             s_cmd_cb("set_channel", ch_str, strlen(ch_str));
         } else if (strstr(buf, "scan_chan")) {
             s_cmd_cb("scan_chan", "", 0);
+        } else if (strstr(buf, "switch2wifi")) {
+            s_cmd_cb("switch2wifi", "", 0);
         } else if (strstr(buf, "ota_start")) {
             char *ps = strstr(buf, "\"size\":");
             char *pv = strstr(buf, "\"ver\":");
