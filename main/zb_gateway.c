@@ -128,6 +128,27 @@ static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
         ha_mqtt_publish_zigbee(addr, "occupancy", payload);
         break;
     }
+    case ESP_ZB_ZCL_CLUSTER_ID_IAS_ZONE: {
+        uint16_t zs = *(uint16_t *)msg->attribute.data.value;
+        snprintf(payload, sizeof(payload), "{\"zone_status\":%u,\"motion\":%u}", zs, (uint8_t)(zs & 1));
+        ha_mqtt_publish_zigbee(addr, "ias_zone", payload);
+        break;
+    }
+    case ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG: {
+        uint16_t attr_id = msg->attribute.id;
+        if (attr_id == 0x0021) {
+            uint8_t raw = *(uint8_t *)msg->attribute.data.value;
+            snprintf(payload, sizeof(payload), "{\"pct\":%u,\"raw\":%u}", raw / 2, raw);
+        } else if (attr_id == 0x0020) {
+            uint8_t raw = *(uint8_t *)msg->attribute.data.value;
+            snprintf(payload, sizeof(payload), "{\"voltage_mv\":%u,\"raw\":%u}", (unsigned)(raw * 100U), raw);
+        } else {
+            uint8_t raw = *(uint8_t *)msg->attribute.data.value;
+            snprintf(payload, sizeof(payload), "{\"attr\":\"0x%04x\",\"raw\":%u}", attr_id, raw);
+        }
+        ha_mqtt_publish_zigbee(addr, "battery", payload);
+        break;
+    }
     default: {
         snprintf(payload, sizeof(payload),
                  "{\"cluster\":\"0x%04x\",\"attr\":\"0x%04x\"}",
