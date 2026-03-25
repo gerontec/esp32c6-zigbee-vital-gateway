@@ -19,6 +19,9 @@
 #include "esp_system.h"
 #include "nvs.h"
 #include <string.h>
+#include "lwip/sockets.h"
+#include "esp_netif.h"
+#include "esp_netif_ip_addr.h"
 
 #define TAG      "wifi_sw"
 #define NVS_NS   "wifi_sw"
@@ -52,6 +55,53 @@ void wifi_switch_trigger(void) {
     /* Kurze Verzögerung damit emit() flushen kann, dann Neustart */
     vTaskDelay(pdMS_TO_TICKS(150));
     esp_restart();
+}
+
+/* ── Minimales MQTT PUBLISH über TCP-Socket ─────────────────────────────── */
+static void mqtt_publish_ip(const char *broker_ip, const char *topic,
+                            const char *payload) {
+    struct sockaddr_in addr = {
+        .sin_family = AF_INET,
+        .sin_port   = htons(1883),
+    };
+    inet_pton(AF_INET, broker_ip, &addr.sin_addr);
+
+    int sock = socket(AF_INET, SOCK_STREAM, 0);
+    if (sock < 0) return;
+    struct timeval tv = { .tv_sec = 3 };
+    setsockopt(sock, SOL_SOCKET, SO_RCVTIMEO, &tv, sizeof(tv));
+    setsockopt(sock, SOL_SOCKET, SO_SNDTIMEO, &tv, sizeof(tv));
+
+    if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        close(sock); return;
+    }
+
+    /* MQTT CONNECT packet (clientId="esp32c6") */
+    uint8_t connect_pkt[] = {
+        0x10, 0x12,                          /* CONNECT, remaining=18 */
+        0x00, 0x04, 'M','Q','T','T',       /* protocol name */
+        0x04,                                /* protocol level 3.1.1 */
+        0x02,                                /* connect flags: clean session */
+        0x00, 0x3c,                          /* keepalive 60s */
+        0x00, 0x08,                          /* clientId length */
+        'e','s','p','3','2','c','6','x'    /* clientId "esp32c6x" */
+    };
+    write(sock, connect_pkt, sizeof(connect_pkt));
+    uint8_t connack[4]; read(sock, connack, 4); /* wait CONNACK */
+
+    /* MQTT PUBLISH packet */
+    uint16_t tlen = (uint16_t)strlen(topic);
+    uint16_t plen = (uint16_t)strlen(payload);
+    uint32_t remaining = 2 + tlen + plen;  /* no QoS packet id */
+    uint8_t pub_hdr[2] = { 0x30, (uint8_t)remaining };
+    uint8_t tlen_be[2] = { (uint8_t)(tlen >> 8), (uint8_t)(tlen & 0xff) };
+    write(sock, pub_hdr, 2);
+    write(sock, tlen_be, 2);
+    write(sock, topic, tlen);
+    write(sock, payload, plen);
+
+    vTaskDelay(pdMS_TO_TICKS(200));
+    close(sock);
 }
 
 /* ── WiFi-Modus (läuft in app_main vor Zigbee-Start) ───────────────────── */
@@ -126,6 +176,24 @@ void wifi_switch_run(void) {
         "{\"t\":\"switch2wifi\",\"state\":\"connected\",\"ssid\":\"%s\",\"timeout_s\":%d}",
         ssid, WIFI_SWITCH_TIMEOUT_S);
     ha_mqtt_emit_raw(line);
+
+    /* IP ermitteln und per MQTT direkt an Broker senden */
+    esp_netif_t *netif = esp_netif_get_handle_from_ifkey("WIFI_STA_DEF");
+    if (netif) {
+        esp_netif_ip_info_t ip_info;
+        if (esp_netif_get_ip_info(netif, &ip_info) == ESP_OK) {
+            char ip_str[16];
+            esp_ip4addr_ntoa(&ip_info.ip, ip_str, sizeof(ip_str));
+            char mqtt_payload[100];
+            snprintf(mqtt_payload, sizeof(mqtt_payload),
+                     "{\"t\":\"wifi_ip\",\"ip\":\"%s\",\"ssid\":\"%s\"}",
+                     ip_str, ssid);
+            mqtt_publish_ip("192.168.178.218",
+                            "gw/coordinator/zigbee/client/wifi_ip",
+                            mqtt_payload);
+            ha_mqtt_emit_raw(mqtt_payload);  /* auch per UART */
+        }
+    }
 
     /* Timeout laufen lassen */
     vTaskDelay(pdMS_TO_TICKS((uint32_t)WIFI_SWITCH_TIMEOUT_S * 1000));
