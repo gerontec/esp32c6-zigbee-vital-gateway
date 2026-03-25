@@ -156,8 +156,13 @@ static void zb_task(void *arg) {
     esp_zb_cluster_list_t *cl = esp_zb_zcl_cluster_list_create();
 
     esp_zb_basic_cluster_cfg_t basic_cfg = { .zcl_version = 3, .power_source = 0x03 };
-    esp_zb_cluster_list_add_basic_cluster(cl,
-        esp_zb_basic_cluster_create(&basic_cfg), ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
+    esp_zb_attribute_list_t *basic_attr = esp_zb_basic_cluster_create(&basic_cfg);
+    /* ZCL Character String: erstes Byte = Länge */
+    static const char mfr_str[]   = "\x09Espressif";   /* len=9 */
+    static const char model_str[] = "\x0cESP32-C6-ZB";  /* len=12 */
+    esp_zb_basic_cluster_add_attr(basic_attr, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, (void *)mfr_str);
+    esp_zb_basic_cluster_add_attr(basic_attr, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,  (void *)model_str);
+    esp_zb_cluster_list_add_basic_cluster(cl, basic_attr, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
     esp_zb_identify_cluster_cfg_t id_cfg = { .identify_time = 0 };
     esp_zb_cluster_list_add_identify_cluster(cl,
