@@ -5,6 +5,7 @@
  * Meldet Attributwechsel via ha_mqtt_publish_attr()
  */
 #include <string.h>
+#include <stdlib.h>
 #include "freertos/FreeRTOS.h"
 #include "freertos/task.h"
 #include "esp_log.h"
@@ -162,6 +163,15 @@ static void zb_task(void *arg) {
     static const char model_str[] = "\x0cESP32-C6-ZB";  /* len=12 */
     esp_zb_basic_cluster_add_attr(basic_attr, ESP_ZB_ZCL_ATTR_BASIC_MANUFACTURER_NAME_ID, (void *)mfr_str);
     esp_zb_basic_cluster_add_attr(basic_attr, ESP_ZB_ZCL_ATTR_BASIC_MODEL_IDENTIFIER_ID,  (void *)model_str);
+    /* DateCode attr 0x0006 – Compile-Datum "YYYYMMDD" als ZCL-String */
+    static char date_str[10];  /* \x08YYYYMMDD */
+    {
+        static const char *months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+        const char *d = __DATE__;
+        int mo = 1; for (; mo <= 12; mo++) if (strncmp(d, months+(mo-1)*3, 3)==0) break;
+        snprintf(date_str, sizeof(date_str), "\x08%04d%02d%02d", atoi(d+7), mo, atoi(d+4));
+    }
+    esp_zb_basic_cluster_add_attr(basic_attr, ESP_ZB_ZCL_ATTR_BASIC_DATE_CODE_ID, (void *)date_str);
     esp_zb_cluster_list_add_basic_cluster(cl, basic_attr, ESP_ZB_ZCL_CLUSTER_SERVER_ROLE);
 
     esp_zb_identify_cluster_cfg_t id_cfg = { .identify_time = 0 };

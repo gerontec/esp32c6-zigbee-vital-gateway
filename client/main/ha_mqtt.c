@@ -14,6 +14,19 @@
 #include "freertos/semphr.h"
 #include "esp_log.h"
 #include "ha_mqtt.h"
+
+/* Compile-Zeit-Datum aus __DATE__ ("Mar 25 2026") → "2026-03-25" */
+static const char *_build_date(void) {
+    static char s[11];
+    if (s[0]) return s;
+    static const char *months = "JanFebMarAprMayJunJulAugSepOctNovDec";
+    const char *d = __DATE__;  /* "Mar 25 2026" */
+    int mo = 1; for (; mo <= 12; mo++) if (strncmp(d, months+(mo-1)*3, 3)==0) break;
+    int day = atoi(d + 4);
+    int year = atoi(d + 7);
+    snprintf(s, sizeof(s), "%04d-%02d-%02d", year, mo, day);
+    return s;
+}
 #include "esp_mac.h"
 
 #define BUF_SIZE 512
@@ -114,15 +127,15 @@ void ha_mqtt_publish_ota_status(const char *status, uint32_t offset, uint32_t to
 }
 
 void ha_mqtt_publish_heartbeat(uint32_t uptime_s, uint16_t pan_id, uint8_t channel, int8_t rssi, float temp_c) {
-    char line[200];
+    char line[220];
     if (temp_c <= -126.0f) {
         snprintf(line, sizeof(line),
-            "{\"t\":\"heartbeat\",\"mac\":\"%s\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d,\"temp\":null}",
-            s_mac_str, (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi);
+            "{\"t\":\"heartbeat\",\"mac\":\"%s\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d,\"temp\":null,\"build\":\"%s\"}",
+            s_mac_str, (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi, _build_date());
     } else {
         snprintf(line, sizeof(line),
-            "{\"t\":\"heartbeat\",\"mac\":\"%s\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d,\"temp\":%.2f}",
-            s_mac_str, (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi, (double)temp_c);
+            "{\"t\":\"heartbeat\",\"mac\":\"%s\",\"uptime\":%lu,\"pan\":\"0x%04x\",\"ch\":%u,\"rssi\":%d,\"temp\":%.2f,\"build\":\"%s\"}",
+            s_mac_str, (unsigned long)uptime_s, (unsigned)pan_id, (unsigned)channel, (int)rssi, (double)temp_c, _build_date());
     }
     emit(line);
 }
