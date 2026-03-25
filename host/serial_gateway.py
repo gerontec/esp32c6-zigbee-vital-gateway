@@ -527,8 +527,7 @@ def _html():
         <tr style="cursor:pointer" onclick="location.href='/device/{addr}'"
             title="Detail anzeigen">
           <td><a href="/device/{addr}" style="color:#7ecbff;text-decoration:none">{addr}</a></td>
-
-
+          <td style="font-size:.85em;color:#aaa">{d.get("mfr","") or "–"}<br>{d.get("model","") or ""}</td>
           <td>{clusters_html}</td>
           <td>{lqi_html}</td>
           <td>{rssi_html}</td>

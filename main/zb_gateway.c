@@ -33,6 +33,8 @@ typedef struct {
     bool     used;
     uint8_t  lqi;   /* letzte LQI vom APS-Layer */
     int8_t   rssi;  /* letzte RSSI vom IEEE 802.15.4 Layer (dBm) */
+    char     mfr[33];   /* Basic 0x0004 ManufacturerName */
+    char     model[33]; /* Basic 0x0005 ModelIdentifier */
 } zb_device_t;
 
 static zb_device_t  s_devices[MAX_DEVICES];
@@ -56,9 +58,59 @@ static zb_device_t *find_or_add(uint16_t addr, const uint8_t *ieee) {
     return NULL;
 }
 
+/* ── Basic-Cluster: Hersteller + Model beim Join lesen ─────────────────── */
+static uint16_t s_basic_pending_addr = 0xFFFF;
+static uint16_t s_basic_attrs[2] = { 0x0004, 0x0005 };
+
+static void read_basic_cb(uint8_t param) {
+    (void)param;
+    if (s_basic_pending_addr == 0xFFFF) return;
+    esp_zb_zcl_read_attr_cmd_t req = {
+        .zcl_basic_cmd = {
+            .dst_addr_u  = { .addr_short = s_basic_pending_addr },
+            .dst_endpoint = 1,
+            .src_endpoint = ZB_ENDPOINT,
+        },
+        .address_mode = ESP_ZB_APS_ADDR_MODE_16_ENDP_PRESENT,
+        .clusterID    = ESP_ZB_ZCL_CLUSTER_ID_BASIC,
+        .attr_number  = 2,
+        .attr_field   = s_basic_attrs,
+    };
+    esp_zb_zcl_read_attr_cmd_req(&req);
+    s_basic_pending_addr = 0xFFFF;
+}
+
 /* ── ZCL-Attribut-Callback ──────────────────────────────────────────────── */
 static esp_err_t zb_action_handler(esp_zb_core_action_callback_id_t callback_id,
                                     const void *message) {
+    /* Basic cluster read response */
+    if (callback_id == ESP_ZB_CORE_CMD_READ_ATTR_RESP_CB_ID) {
+        const esp_zb_zcl_cmd_read_attr_resp_message_t *m = message;
+        if (!m || m->info.cluster != ESP_ZB_ZCL_CLUSTER_ID_BASIC) return ESP_OK;
+        uint16_t addr = m->info.src_address.u.short_addr;
+        xSemaphoreTake(s_dev_mutex, portMAX_DELAY);
+        zb_device_t *dev = find_or_add(addr, NULL);
+        if (dev) {
+            for (esp_zb_zcl_read_attr_resp_variable_t *v = m->variables; v; v = v->next) {
+                if (v->status != ESP_ZB_ZCL_STATUS_SUCCESS) continue;
+                char *dst = (v->attribute.id == 0x0004) ? dev->mfr
+                          : (v->attribute.id == 0x0005) ? dev->model : NULL;
+                if (!dst) continue;
+                const uint8_t *s = (const uint8_t *)v->attribute.data.value;
+                uint8_t len = s[0]; if (len > 32) len = 32;
+                memcpy(dst, s + 1, len); dst[len] = '\0';
+            }
+        }
+        xSemaphoreGive(s_dev_mutex);
+        if (dev && (dev->mfr[0] || dev->model[0])) {
+            char pl[100];
+            snprintf(pl, sizeof(pl),
+                     "{\"mfr\":\"%s\",\"model\":\"%s\"}", dev->mfr, dev->model);
+            ha_mqtt_publish_zigbee(addr, "basic", pl);
+        }
+        return ESP_OK;
+    }
+
     /* OTA Server: Bild-Query vom Client */
     if (callback_id == ESP_ZB_CORE_OTA_UPGRADE_SRV_QUERY_IMAGE_CB_ID) {
         const esp_zb_zcl_ota_upgrade_server_query_image_message_t *m = message;
@@ -235,6 +287,9 @@ void esp_zb_app_signal_handler(esp_zb_app_signal_t *signal_struct) {
                  "{\"event\":\"joined\",\"addr\":\"0x%04x\",\"ieee\":\"%s\"}",
                  a, ieee_str);
         ha_mqtt_publish_zigbee(a, "join", payload);
+        /* Basic-Attribute nach 500 ms lesen */
+        s_basic_pending_addr = a;
+        esp_zb_scheduler_alarm(read_basic_cb, 0, 500);
         break;
     }
 
