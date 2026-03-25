@@ -160,3 +160,72 @@ ssh pi 'python -m esptool --chip esp32c6 -p /dev/ttyACM1 -b 460800 \
   0x20000 build/zigbee-vital-sensor.bin'
 ssh pi 'sudo systemctl start zigbee-mqtt-gateway'
 ```
+
+---
+
+### 11. ZCL Switch-Case: IAS Zone + Power Config Handler fehlten
+
+Die `patch_multi_cluster.py`-Skripte meldeten Erfolg, aber die Anchor-Strings
+passten wegen unterschiedlicher Escape-Sequenzen (`\"` vs `\\"`) nicht exakt.
+IAS Zone (0x0500) und Power Config (0x0001) Reports fielen deshalb in den
+`default`-Case und wurden als `{"cluster":"0x0500","attr":"0x0002"}` geloggt
+— **ohne raw-Wert**.
+
+**Fix:** Handler direkt mit korrekt escapten C-Strings ergänzt:
+
+```c
+case ESP_ZB_ZCL_CLUSTER_ID_IAS_ZONE: {
+    uint16_t zs = *(uint16_t *)msg->attribute.data.value;
+    snprintf(payload, sizeof(payload), "{\"zone_status\":%u,\"motion\":%u}", zs, (uint8_t)(zs & 1));
+    ha_mqtt_publish_zigbee(addr, "ias_zone", payload);
+    break;
+}
+case ESP_ZB_ZCL_CLUSTER_ID_POWER_CONFIG: {
+    uint16_t attr_id = msg->attribute.id;
+    if (attr_id == 0x0021) {                          // BatteryPercentageRemaining
+        uint8_t raw = *(uint8_t *)msg->attribute.data.value;
+        snprintf(payload, sizeof(payload), "{\"pct\":%u,\"raw\":%u}", raw / 2, raw);
+    } else if (attr_id == 0x0020) {                   // BatteryVoltage (100 mV Einheiten)
+        uint8_t raw = *(uint8_t *)msg->attribute.data.value;
+        snprintf(payload, sizeof(payload), "{\"voltage_mv\":%u,\"raw\":%u}", (unsigned)(raw * 100U), raw);
+    } else {
+        uint8_t raw = *(uint8_t *)msg->attribute.data.value;
+        snprintf(payload, sizeof(payload), "{\"attr\":\"0x%04x\",\"raw\":%u}", attr_id, raw);
+    }
+    ha_mqtt_publish_zigbee(addr, "battery", payload);
+    break;
+}
+```
+
+**Tuya-Batterie-Werte:**
+- `attr 0x0021`: `raw=170` → `pct=85` (%)  — `raw / 2 = %`
+- `attr 0x0020`: `raw=29`  → `voltage_mv=2900` (mV) — `raw × 100 mV`
+- CR2032 voll: raw≈32 (3200 mV), leer: raw≈27 (2700 mV)
+
+---
+
+### 12. Konfigurierbare Sleep-Intervall (ZCL Custom Cluster 0xFF01 Cmd 0x02)
+
+Default-Heartbeat-Intervall 600 s ist jetzt per MQTT/Web UI änderbar.
+
+- **Client:** `volatile uint32_t s_sleep_ms` (default 600 000 ms), NVS `client_cfg/sleep_s`
+- **ZCL-Befehl:** Cluster 0xFF01, Command 0x02, Payload uint32 (Sekunden)
+- **`zb_device_set_sleep(secs)`:** setzt `s_sleep_ms`, `s_temp_report_ms = (secs+5)*1000`, speichert NVS
+- Minimum: 10 s; überlebt Reboot via NVS
+
+```bash
+# Via MQTT:
+mosquitto_pub -h 192.168.178.218 -t "gw/coordinator/cmd/set_sleep" -m 300
+
+# Via Web UI:
+# Device-Detailseite → Sleep-Intervall-Formular
+```
+
+---
+
+### 13. Web UI – "Zuletzt"-Spalte entfernt
+
+Der `last_seen`-Zeitstempel in der Geräteliste war unzuverlässig
+(Pi-seitige Systemzeit beim Empfang, nicht Gerätezeit).
+**Authoritative Timestamps** stehen im Payload jedes Clusters selbst.
+Spalte entfernt; Tabelle hat jetzt 6 Spalten: Adresse, Name, IEEE, Payload, LQI, RSSI.
