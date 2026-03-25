@@ -527,7 +527,7 @@ def _html():
         <tr style="cursor:pointer" onclick="location.href='/device/{addr}'"
             title="Detail anzeigen">
           <td><a href="/device/{addr}" style="color:#7ecbff;text-decoration:none">{addr}</a></td>
-          <td>{d.get('name', addr)}</td>
+
 
           <td>{clusters_html}</td>
           <td>{lqi_html}</td>
@@ -586,8 +586,8 @@ def _html():
   </form>
   <h3>Zigbee-Geräte ({len(s['devices'])})</h3>
   <table>
-    <tr><th>Adresse</th><th>Name</th><th>Payload</th><th>LQI</th><th>RSSI</th></tr>
-    {dev_rows or '<tr><td colspan="5"><em>keine Geräte</em></td></tr>'}
+    <tr><th>Adresse</th><th>Payload</th><th>LQI</th><th>RSSI</th></tr>
+    {dev_rows or '<tr><td colspan="4"><em>keine Geräte</em></td></tr>'}
   </table>
 </section>
 <section>
