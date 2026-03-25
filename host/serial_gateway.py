@@ -672,6 +672,10 @@ def _device_html(addr):
     </select>
     <button type="submit">Senden</button>
   </form>
+  <form method="POST" action="/api/device/{addr}/delete"
+        onsubmit="return confirm('Gerät {addr} wirklich entfernen?')">
+    <button type="submit" style="margin-top:.5em;background:#5a1a1a;color:#ffaaaa;border:1px solid #aa3333;padding:.25em .75em">&#x1F5D1; Aus Liste entfernen</button>
+  </form>
   <h3 style="color:#7ecbff;margin-top:1em">Sleep-Intervall</h3>
   <form method="POST" action="/api/sleep">
     <input name="addr" type="hidden" value="{addr}">
@@ -739,6 +743,26 @@ class _Handler(BaseHTTPRequestHandler):
                 ser.write(uart_msg.encode())
             self.send_response(302)
             self.send_header("Location", f"/device/{addr}")
+            self.end_headers()
+            return
+
+        if path.startswith("/api/device/") and path.endswith("/delete"):
+            addr = path[len("/api/device/"):-len("/delete")]
+            with _state_lock:
+                _state["devices"].pop(addr, None)
+            try:
+                with _db_lock:
+                    cx = _get_db()
+                    if cx:
+                        with cx.cursor() as c:
+                            c.execute("DELETE FROM esp32_zigbee_devices WHERE mac=%s AND addr=%s",
+                                      (DB_MAC, addr))
+                        cx.commit()
+            except Exception as e:
+                print(f"[DB] delete {addr}: {e}")
+            print(f"[Web] device {addr} deleted")
+            self.send_response(302)
+            self.send_header("Location", "/")
             self.end_headers()
             return
 
