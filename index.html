@@ -1,0 +1,133 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Seeed MR60BHA2 — Dashboard</title>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css">
+<style>
+  body { background:#0d1117; color:#e6edf3; font-family:'Segoe UI',sans-serif; }
+  .card { background:#161b22; border:1px solid #30363d; }
+  .card-header { background:#21262d; border-bottom:1px solid #30363d; font-weight:600; font-size:.85rem; color:#8b949e; letter-spacing:.05em; text-transform:uppercase; }
+  .metric-val { font-size:3rem; font-weight:700; line-height:1; }
+  .metric-unit { font-size:1rem; color:#8b949e; }
+  .metric-label { font-size:.8rem; color:#8b949e; margin-top:.25rem; }
+  .heart  { color:#ff7b72; }
+  .breath { color:#79c0ff; }
+  .dist   { color:#56d364; }
+  .lux    { color:#e3b341; }
+  .person-on  { color:#56d364; }
+  .person-off { color:#6e7681; }
+  #status-dot { width:10px; height:10px; border-radius:50%; display:inline-block; background:#6e7681; }
+  #status-dot.online { background:#56d364; box-shadow:0 0 6px #56d364; }
+  .ts { font-size:.75rem; color:#6e7681; }
+  .navbar { background:#161b22 !important; border-bottom:1px solid #30363d; }
+  .devbar { background:#161b22; border-bottom:1px solid #30363d; padding:6px 16px; font-size:.8rem; color:#8b949e; }
+</style>
+</head>
+<body>
+
+<div class="devbar">
+  Other devices:
+  <a href="https://heissa.de/waveshare/dashboard.php" style="color:#58a6ff;margin-left:8px">⚡ Waveshare Relay Heizstab</a>
+</div>
+
+<nav class="navbar navbar-dark sticky-top">
+  <div class="container-fluid px-4">
+    <span class="navbar-brand fw-bold">🫀 Seeed MR60BHA2 — Vital &amp; Presence Radar</span>
+    <div class="d-flex align-items-center gap-2">
+      <span id="status-dot"></span>
+      <span id="status-txt" class="ts">—</span>
+      <a href="api.php?action=status" class="btn btn-sm btn-outline-secondary" target="_blank">JSON</a>
+    </div>
+  </div>
+</nav>
+
+<div class="container py-4" style="max-width:900px">
+
+  <!-- Person -->
+  <div class="card mb-3">
+    <div class="card-header">Presence</div>
+    <div class="card-body text-center py-3">
+      <div id="person-icon" class="fs-1 person-off">🧍</div>
+      <div id="person-txt" class="metric-label">—</div>
+      <div class="mt-1 ts">Targets detected: <span id="targets">—</span></div>
+    </div>
+  </div>
+
+  <!-- Vitals row -->
+  <div class="row g-3 mb-3">
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header">Heart Rate</div>
+        <div class="card-body text-center py-4">
+          <div class="metric-val heart" id="heart">—</div>
+          <div class="metric-unit">bpm</div>
+          <div class="metric-label">Real-time heart rate</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header">Respiratory Rate</div>
+        <div class="card-body text-center py-4">
+          <div class="metric-val breath" id="breath">—</div>
+          <div class="metric-unit">rpm</div>
+          <div class="metric-label">Real-time respiratory rate</div>
+        </div>
+      </div>
+    </div>
+    <div class="col-md-4">
+      <div class="card h-100">
+        <div class="card-header">Distance</div>
+        <div class="card-body text-center py-4">
+          <div class="metric-val dist" id="dist">—</div>
+          <div class="metric-unit">cm</div>
+          <div class="metric-label">Distance to detection object</div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Illuminance -->
+  <div class="card mb-3">
+    <div class="card-header">Illuminance</div>
+    <div class="card-body text-center py-3">
+      <div class="metric-val lux" id="lux">—</div>
+      <div class="metric-unit">lx</div>
+    </div>
+  </div>
+
+  <div class="ts text-end">Last update: <span id="received">—</span></div>
+</div>
+
+<script>
+async function poll() {
+  try {
+    const r = await fetch('api.php?action=status');
+    const d = await r.json();
+    if (d.error) return;
+
+    document.getElementById('heart').textContent   = d.heart_rate   ?? '—';
+    document.getElementById('breath').textContent  = d.resp_rate    ?? '—';
+    document.getElementById('dist').textContent    = d.distance != null ? parseFloat(d.distance).toFixed(1) : '—';
+    document.getElementById('lux').textContent     = d.illuminance  != null ? parseFloat(d.illuminance).toFixed(1) : '—';
+    document.getElementById('targets').textContent = d.targets      ?? '—';
+    document.getElementById('received').textContent = d._received   ?? '—';
+
+    const present = d.person === 'ON';
+    document.getElementById('person-icon').className = 'fs-1 ' + (present ? 'person-on' : 'person-off');
+    document.getElementById('person-txt').textContent  = present ? 'Person detected' : 'No person detected';
+
+    const dot = document.getElementById('status-dot');
+    const age = d._received ? (Date.now() - new Date(d._received).getTime()) / 1000 : 999;
+    dot.className = age < 60 ? 'online' : '';
+    document.getElementById('status-txt').textContent = age < 60 ? 'live' : `last seen ${Math.round(age)}s ago`;
+  } catch(e) {}
+}
+
+poll();
+setInterval(poll, 5000);
+</script>
+</body>
+</html>
